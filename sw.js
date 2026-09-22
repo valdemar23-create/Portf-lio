@@ -3,7 +3,12 @@
 // depois da primeira visita, a app abra normalmente mesmo sem ligação à internet.
 // Os dados financeiros NUNCA passam por aqui — continuam apenas em localStorage, no dispositivo.
 
-const CACHE_NAME = 'portfolio-financeiro-v1';
+// IMPORTANTE: sempre que a app for atualizada, este número deve subir (v2, v3, ...).
+// É essa alteração de conteúdo no PRÓPRIO ficheiro sw.js que faz o browser detetar uma versão
+// nova do service worker e substituir a cache antiga — sem isto, alterar só o index.html pode
+// não chegar a quem já tem a app instalada, porque o browser continua a usar o service worker
+// (e a cache) antigos até reparar que este ficheiro mudou.
+const CACHE_NAME = 'portfolio-financeiro-v2';
 const APP_SHELL = [
   './',
   './index.html',
