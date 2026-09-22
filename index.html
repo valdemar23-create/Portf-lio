@@ -201,8 +201,9 @@ th{
 th span.arrow{opacity:.5;margin-left:3px;font-size:10px;}
 td{padding:9px 10px;border-bottom:1px solid var(--border);white-space:nowrap;}
 tbody tr:hover{background:var(--bg-sunken);}
-/* Destaque visual dos movimentos de Depósito (entrada de dinheiro) e Levantamento (saída de dinheiro)
-   na tabela de Movimentos, sem alterar a cor própria dos badges de classe nem dos botões de ação. */
+/* Destaque visual dos movimentos de Depósito (entrada de dinheiro) e Levantamento/Venda (saída de
+   dinheiro ou redução de posição) na tabela de Movimentos, sem alterar a cor própria dos badges de
+   classe nem dos botões de ação. */
 tr.row-deposit td:not(.badge-cell):not(.actions-cell){ font-weight:700; color:var(--positive); }
 tr.row-withdraw td:not(.badge-cell):not(.actions-cell){ font-weight:700; color:var(--negative); }
 td.num,th.num{text-align:right;font-family:var(--font-num);}
@@ -396,6 +397,19 @@ function fmtLocalISO(d){
   return `${y}-${m}-${day}`;
 }
 function todayISO(){ return fmtLocalISO(new Date()); }
+/* Limite superior "razoável" para a data de um movimento: hoje + 1 ano (permite lançar algo
+   agendado com alguma antecedência, ex: um vencimento já conhecido) sem aceitar erros de
+   digitação óbvios como escrever "2323" em vez de "2023"/"2026". Usado tanto no atributo
+   max="" do campo de data (bloqueia no seletor) como numa verificação explícita ao gravar
+   (porque o atributo max sozinho nem sempre impede escrever o ano diretamente pelo teclado). */
+function maxMovementDate(){
+  const d = new Date(); d.setFullYear(d.getFullYear()+1);
+  return fmtLocalISO(d);
+}
+function isReasonableMovementDate(iso){
+  if(!ISO_DATE_RE.test(iso)) return false;
+  return iso >= '2000-01-01' && iso <= maxMovementDate();
+}
 /* Avança uma chave de mês "YYYY-MM" para o mês seguinte usando apenas aritmética inteira — nunca cria um
    objeto Date para este cálculo, precisamente para nunca reintroduzir o bug de fuso horário acima. */
 function nextMonthKey(mk){
@@ -918,7 +932,10 @@ function usesQuantityFields(classId){
   if(classId==='etf') return true;
   if(classId==='p2p' || classId==='ppr' || classId==='deposito' || classId==='outro') return false;
   const c = classById(classId);
-  return !!(c && !c.system);
+  // Categorias novas podem agora escolher explicitamente o seu modo de cálculo (usesQty).
+  // Quando esse campo não existe ainda (categorias criadas antes desta opção existir), mantém-se
+  // o comportamento antigo — tratar como quantidade × preço — para não alterar dados já introduzidos.
+  return !!(c && !c.system && c.usesQty!==false);
 }
 
 function computeAllAssetMetrics(asOfDate){
@@ -1591,6 +1608,10 @@ function renderDashboard(root){
         <div class="stat-value">${fmtMoney(summary.totalIncome)}</div>
       </div>
       <div class="card stat-card">
+        <div class="stat-label">Comissões pagas <span class="tooltip-i" data-tip="Soma de todas as comissões registadas nos movimentos (de qualquer tipo). É um custo — reduz o que efetivamente lhe fica de cada movimento.">i</span></div>
+        <div class="stat-value neg">${fmtMoney(summary.totalCommissions)}</div>
+      </div>
+      <div class="card stat-card">
         <div class="stat-label">Reforços realizados</div>
         <div class="stat-value">${fmtMoney(summary.totalContributions)}</div>
       </div>
@@ -1711,22 +1732,34 @@ function drawAssetBarChart(assetMetrics){
   CHART_REGISTRY['assetBar'] = safeMakeChart(ctx, {
     type:'bar',
     data:{ labels: top.map(t=>t.asset.name), datasets:[{ label:'Valor atual', data: top.map(t=>t.currentValue), backgroundColor:c.palette, borderRadius:5 }]},
-    options: Object.assign(baseChartOptions(c, {currency:true}), { indexAxis:'y', plugins:{legend:{display:false}} })
+    options: Object.assign(baseChartOptions(c, {currency:true, horizontal:true, legend:false}), { indexAxis:'y' })
   });
 }
 function emptyChartHTML(msg){ return `<div class="empty-state" style="padding:30px;"><div class="icon">📊</div><p>${msg}</p></div>`; }
 function baseChartOptions(c, opts){
   opts = opts || {};
+  const valueTickCb = (v)=> opts.currency ? fmtCompact(v) : v;
+  // Barras horizontais (indexAxis:'y') invertem os eixos: o eixo X passa a ser o dos valores
+  // e o eixo Y passa a ser o das categorias (nomes) — por isso a formatação de moeda e o
+  // valor usado no tooltip têm de seguir essa troca, senão o eixo das categorias mostra
+  // números formatados como moeda (ex.: "0€", "1€"...) em vez dos nomes dos ativos.
+  const scales = opts.horizontal ? {
+    x:{ grid:{ color:c.grid }, ticks:{ color:c.inkFaint, callback:valueTickCb } },
+    y:{ grid:{ color:c.grid, display:false }, ticks:{ color:c.inkFaint } }
+  } : {
+    x:{ grid:{ color:c.grid, display:false }, ticks:{ color:c.inkFaint } },
+    y:{ grid:{ color:c.grid }, ticks:{ color:c.inkFaint, callback:valueTickCb } }
+  };
   return {
     responsive:true, maintainAspectRatio:false,
-    interaction:{ mode:'index', intersect:false },
-    scales:{
-      x:{ grid:{ color:c.grid, display:false }, ticks:{ color:c.inkFaint } },
-      y:{ grid:{ color:c.grid }, ticks:{ color:c.inkFaint, callback:(v)=> opts.currency ? fmtCompact(v) : v } }
-    },
+    interaction: opts.horizontal ? { mode:'index', intersect:false, axis:'y' } : { mode:'index', intersect:false },
+    scales,
     plugins:{
-      legend:{ position:'bottom', labels:{ color:c.inkSoft, boxWidth:10, padding:12 } },
-      tooltip:{ callbacks:{ label:(ctx)=> ` ${ctx.dataset.label}: ${opts.currency ? fmtMoney(ctx.parsed.y!==undefined?ctx.parsed.y:ctx.parsed.x) : ctx.formattedValue}` } }
+      legend: opts.legend===false ? { display:false } : { position:'bottom', labels:{ color:c.inkSoft, boxWidth:10, padding:12 } },
+      tooltip:{ callbacks:{ label:(ctx)=>{
+        const raw = opts.horizontal ? ctx.parsed.x : (ctx.parsed.y!==undefined?ctx.parsed.y:ctx.parsed.x);
+        return ` ${ctx.dataset.label}: ${opts.currency ? fmtMoney(raw) : ctx.formattedValue}`;
+      } } }
     }
   };
 }
@@ -1929,6 +1962,7 @@ function openValuationModal(asset, existing){
     const errEl = document.getElementById('err-vf');
     if(!ISO_DATE_RE.test(date)){ errEl.textContent = 'Indique uma data válida.'; return; }
     if(date > todayISO()){ errEl.textContent = 'A data não pode ser no futuro.'; return; }
+    if(date < '2000-01-01'){ errEl.textContent = 'Data pouco provável — verifique o ano.'; return; }
     if(rawValue === '' || isNaN(num(rawValue))){ errEl.textContent = 'Indique um valor válido.'; return; }
     errEl.textContent = '';
     if(isEdit && existing.date !== date){
@@ -2059,7 +2093,7 @@ function openMovementModal(existingMovement, preset){
     <div class="modal-header"><h3>${isEdit?'Editar':'Novo'} movimento</h3><button class="modal-close">${icon('x',18)}</button></div>
     <div class="modal-body">
       <div class="form-grid">
-        <div class="field"><label>Data *</label><input type="date" id="mfDate" value="${mv.date}"></div>
+        <div class="field"><label>Data *</label><input type="date" id="mfDate" value="${mv.date}" min="2000-01-01" max="${maxMovementDate()}"></div>
         <div class="field"><label>Tipo *</label><select id="mfType">${MOVEMENT_TYPES.map(t=>`<option value="${t}" ${t===mv.type?'selected':''}>${t}</option>`).join('')}</select></div>
         <div class="field"><label>Classe *</label><select id="mfClass">${STATE.classes.map(c=>`<option value="${c.id}" ${c.id===mv.classId?'selected':''}>${escapeHtml(c.name)}</option>`).join('')}</select></div>
         <div class="field"><label>Ativo *</label><select id="mfAsset">${renderAssetOptions(mv.classId)}</select></div>
@@ -2069,6 +2103,10 @@ function openMovementModal(existingMovement, preset){
         <div class="field"><label>Preço unitário</label><input type="number" step="0.0001" class="num-input" id="mfPrice" value="${mv.price||''}"></div>
         <div class="field"><label>Valor total * <span class="tooltip-i" data-tip="Se preencher quantidade e preço, este campo é calculado automaticamente — mas pode sempre editar manualmente.">i</span></label><input type="number" step="0.01" class="num-input" id="mfValue" value="${mv.value||''}"></div>
         <div class="field"><label>Comissão</label><input type="number" step="0.01" class="num-input" id="mfCommission" value="${mv.commission||''}"></div>
+        <div class="field span2 checkbox-row" id="mfReinvestRow" style="display:none;">
+          <input type="checkbox" id="mfReinvest">
+          <label for="mfReinvest" style="margin:0;">Somar automaticamente ao "Valor atual" deste ativo <span class="tooltip-i" data-tip="O dinheiro deste rendimento ficou dentro desta conta/plataforma (não foi levantado). Se marcar, o Valor atual do ativo aumenta pelo valor líquido (Valor − Comissão) assim que gravar. Se o dinheiro saiu para outro lado, deixe desmarcado — a app nunca presume isso por si.">i</span></label>
+        </div>
         <div class="field span2"><label>Observações</label><textarea id="mfNotes">${escapeHtml(mv.notes||'')}</textarea></div>
         <div class="field-error span2" id="err-mf"></div>
       </div>
@@ -2078,10 +2116,25 @@ function openMovementModal(existingMovement, preset){
       <button class="btn btn-primary" id="mfSave">${isEdit?'Guardar alterações':'Registar movimento'}</button>
     </div>`);
 
-  document.getElementById('mfClass').onchange = (e)=>{ document.getElementById('mfAsset').innerHTML = renderAssetOptions(e.target.value); };
+  document.getElementById('mfClass').onchange = (e)=>{ document.getElementById('mfAsset').innerHTML = renderAssetOptions(e.target.value); updateReinvestVisibility(); };
   const qtyEl = document.getElementById('mfQty'), priceEl = document.getElementById('mfPrice'), valueEl = document.getElementById('mfValue');
   function autoCalc(){ const q=num(qtyEl.value), p=num(priceEl.value); if(q && p) valueEl.value = +(q*p).toFixed(2); }
   qtyEl.oninput = autoCalc; priceEl.oninput = autoCalc;
+
+  // A opção "Somar automaticamente ao Valor atual" só faz sentido para rendimentos (Juro/Dividendo/Bónus)
+  // em categorias sem quantidade (P2P, PPR, Cofre Pessoal, Outro) — nas categorias com quantidade (ETFs
+  // e afins), o Valor atual é sempre quantidade × preço, não um número editável manualmente.
+  const INCOME_TYPES_FOR_REINVEST = ['Juro','Dividendo',BONUS_TYPE];
+  function updateReinvestVisibility(){
+    const type = document.getElementById('mfType').value;
+    const classId = document.getElementById('mfClass').value;
+    const show = INCOME_TYPES_FOR_REINVEST.includes(type) && !usesQuantityFields(classId);
+    document.getElementById('mfReinvestRow').style.display = show ? 'flex' : 'none';
+    if(!show) document.getElementById('mfReinvest').checked = false;
+  }
+  document.getElementById('mfType').onchange = updateReinvestVisibility;
+  updateReinvestVisibility();
+
   document.getElementById('mfCancel').onclick = closeModal;
   document.getElementById('mfSave').onclick = ()=>{
     const assetSel = document.getElementById('mfAsset');
@@ -2090,9 +2143,17 @@ function openMovementModal(existingMovement, preset){
     if(!value && document.getElementById('mfType').value !== 'Transferência'){
       document.getElementById('err-mf').textContent = 'Indique o valor do movimento.'; return;
     }
+    const dateVal = document.getElementById('mfDate').value || todayISO();
+    // Bloqueia datas manifestamente erradas (ex: escrever "2323" em vez de "2023"/"2026" por engano),
+    // que de outra forma passariam despercebidas (uma data "2323-01-15" é tecnicamente válida) e
+    // distorceriam gravemente os gráficos de evolução, que se estendem sempre até ao movimento mais recente.
+    if(!isReasonableMovementDate(dateVal)){
+      document.getElementById('err-mf').textContent = `Data inválida: "${dateVal}" não parece correta. Verifique o ano (aceite entre 2000 e ${maxMovementDate().slice(0,4)}).`;
+      return;
+    }
     document.getElementById('err-mf').textContent = '';
     const payload = {
-      date: document.getElementById('mfDate').value || todayISO(),
+      date: dateVal,
       type: document.getElementById('mfType').value,
       classId: document.getElementById('mfClass').value,
       assetId: assetSel.value,
@@ -2102,8 +2163,25 @@ function openMovementModal(existingMovement, preset){
       currency: document.getElementById('mfCurrency').value,
       notes: document.getElementById('mfNotes').value.trim(),
     };
+    // "Somar automaticamente ao Valor atual": só se aplica ao CRIAR um movimento novo (não em edições,
+    // para não haver o risco de ajustar o Valor atual duas vezes por engano ao corrigir um movimento
+    // já existente). O aumento é pelo valor LÍQUIDO (valor − comissão), porque a comissão é um custo
+    // que reduz o que efetivamente fica disponível desse rendimento.
+    const reinvestRow = document.getElementById('mfReinvestRow');
+    const shouldReinvest = !isEdit && reinvestRow.style.display !== 'none' && document.getElementById('mfReinvest').checked;
+
     if(isEdit){ Object.assign(existingMovement, payload); toast('Movimento atualizado.', 'ok'); }
     else { STATE.movements.push(Object.assign({id:uid('mv')}, payload)); toast('Movimento registado.', 'ok'); }
+
+    if(shouldReinvest){
+      const asset = STATE.assets.find(a=>a.id===payload.assetId);
+      if(asset){
+        const net = payload.value - payload.commission;
+        asset.currentValue = num(asset.currentValue) + net;
+        toast(`Valor atual de "${asset.name}" atualizado (+${fmtMoney(net, asset.currency)}).`, 'ok');
+      }
+    }
+
     STATE.isDemo = false;
     saveState();
     closeModal();
@@ -2204,19 +2282,47 @@ function exportAssetsCsv(){
   });
   downloadCsv(rows, 'investimentos.csv');
 }
-function downloadCsv(rows, filename){
-  const csv = rows.map(r=> r.map(v=> `"${String(v).replace(/"/g,'""')}"`).join(';')).join('\n');
-  const blob = new Blob(['\uFEFF'+csv], {type:'text/csv;charset=utf-8;'});
+/* Guarda um ficheiro no dispositivo, permitindo (quando o browser suporta) escolher a pasta/nome
+   através da janela nativa "Guardar como...", em vez de ir sempre parar às Transferências.
+   Suporte: Chrome/Edge no computador, em ligação https (ex: a versão instalada via GitHub Pages).
+   Nos restantes casos (telemóvel, Safari, Firefox, ou a abrir o ficheiro diretamente do disco),
+   essa opção não existe no browser, por isso mantém-se o comportamento habitual: descarrega
+   automaticamente para a pasta de Transferências, como sempre funcionou. */
+async function saveFileSmart(content, filename, mimeType){
+  if(window.showSaveFilePicker){
+    try{
+      const ext = filename.includes('.') ? '.'+filename.split('.').pop() : '';
+      const handle = await window.showSaveFilePicker({
+        suggestedName: filename,
+        types: [{ description:'Ficheiro', accept: { [mimeType]: [ext] } }],
+      });
+      const writable = await handle.createWritable();
+      await writable.write(content);
+      await writable.close();
+      toast('Ficheiro guardado.', 'ok');
+      return;
+    }catch(err){
+      if(err && err.name === 'AbortError') return; // utilizador cancelou a janela — nada a fazer
+      console.warn('Não foi possível usar o seletor de pasta; a usar transferência automática.', err);
+      // segue para o método clássico abaixo
+    }
+  }
+  const blob = content instanceof Blob ? content : new Blob([content], {type:mimeType});
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a'); a.href=url; a.download=filename; document.body.appendChild(a); a.click(); a.remove();
   URL.revokeObjectURL(url);
-  toast('Exportação concluída.', 'ok');
+  toast('Exportação concluída (guardado em Transferências).', 'ok');
+}
+function downloadCsv(rows, filename){
+  const csv = rows.map(r=> r.map(v=> `"${String(v).replace(/"/g,'""')}"`).join(';')).join('\n');
+  saveFileSmart('\uFEFF'+csv, filename, 'text/csv');
 }
 
 /* ---------------------------------------------------------------------
    13. PÁGINA: MOVIMENTOS
    --------------------------------------------------------------------- */
 let MOV_SEARCH = '';
+let MOV_SORT = {col:'date', dir:-1}; // por omissão: data, mais recente primeiro (comportamento anterior)
 function renderMovimentos(root){
   root.innerHTML = `
     <div class="card" style="margin-bottom:14px;"><div id="filterBarHost"></div></div>
@@ -2244,20 +2350,47 @@ function renderMovimentos(root){
 function renderMovTable(){
   const container = document.getElementById('movTableWrap');
   if(!container) return;
-  let list = filteredMovements().slice().sort((a,b)=>b.date.localeCompare(a.date));
+  let list = filteredMovements().slice();
   if(MOV_SEARCH){
     list = list.filter(m => ((assetById(m.assetId)||{}).name+m.type+(m.institution||'')+(m.notes||'')).toLowerCase().includes(MOV_SEARCH));
   }
+  // Colunas ordenáveis: clicar num cabeçalho ordena por essa coluna (e clicar de novo inverte a
+  // direção), tal como já acontecia na tabela de Investimentos — antes, esta tabela ignorava
+  // sempre esses cliques e mostrava só por data decrescente.
+  const sortGetters = {
+    date: m=>m.date, type: m=>m.type,
+    class: m=>(classById(m.classId)||{}).name||m.classId,
+    asset: m=>(assetById(m.assetId)||{}).name||'',
+    institution: m=>m.institution||'',
+    value: m=>num(m.value), commission: m=>num(m.commission),
+  };
+  const getter = sortGetters[MOV_SORT.col] || sortGetters.date;
+  list.sort((a,b)=>{
+    const va=getter(a), vb=getter(b);
+    if(typeof va === 'string') return va.localeCompare(vb) * MOV_SORT.dir;
+    return (va-vb) * MOV_SORT.dir;
+  });
   if(!list.length){
     container.innerHTML = `<div class="empty-state"><div class="icon">📄</div><h4>Sem movimentos para os filtros aplicados</h4><p>Registe compras, vendas, dividendos, juros e outros fluxos.</p></div>`;
     return;
   }
+  const arrow = (col)=> MOV_SORT.col===col ? `<span class="arrow">${MOV_SORT.dir===1?'▲':'▼'}</span>` : '';
   container.innerHTML = `
     <div class="table-wrap"><table>
-      <thead><tr><th>Data</th><th>Tipo</th><th>Classe</th><th>Ativo</th><th>Instituição</th><th class="num">Qtd.</th><th class="num">Preço</th><th class="num">Valor</th><th class="num">Comissão</th><th></th></tr></thead>
+      <thead><tr>
+        <th data-sort="date">Data${arrow('date')}</th>
+        <th data-sort="type">Tipo${arrow('type')}</th>
+        <th data-sort="class">Classe${arrow('class')}</th>
+        <th data-sort="asset">Ativo${arrow('asset')}</th>
+        <th data-sort="institution">Instituição${arrow('institution')}</th>
+        <th class="num">Qtd.</th><th class="num">Preço</th>
+        <th class="num" data-sort="value">Valor${arrow('value')}</th>
+        <th class="num" data-sort="commission">Comissão${arrow('commission')}</th>
+        <th></th>
+      </tr></thead>
       <tbody>${list.map(m=>{
         const asset = assetById(m.assetId);
-        const rowClass = m.type==='Depósito' ? 'row-deposit' : m.type==='Levantamento' ? 'row-withdraw' : '';
+        const rowClass = m.type==='Depósito' ? 'row-deposit' : (m.type==='Levantamento' || m.type==='Venda') ? 'row-withdraw' : '';
         return `<tr class="${rowClass}">
           <td>${fmtDate(m.date)}</td><td>${escapeHtml(m.type)}</td><td class="badge-cell">${badgeForClass(m.classId)}</td>
           <td>${escapeHtml(asset?asset.name:'—')}</td><td>${escapeHtml(m.institution||'—')}</td>
@@ -2270,6 +2403,9 @@ function renderMovTable(){
         </tr>`;
       }).join('')}</tbody>
     </table></div>`;
+  container.querySelectorAll('th[data-sort]').forEach(th=>{
+    th.onclick = ()=>{ const col=th.dataset.sort; if(MOV_SORT.col===col) MOV_SORT.dir*=-1; else MOV_SORT={col,dir: col==='date' ? -1 : 1}; renderMovTable(); };
+  });
   container.querySelectorAll('[data-edit]').forEach(b=> b.onclick = ()=> openMovementModal(STATE.movements.find(m=>m.id===b.dataset.edit)));
   container.querySelectorAll('[data-del]').forEach(b=> b.onclick = ()=>{
     confirmDialog('Eliminar movimento','Tem a certeza que quer eliminar este movimento? Esta ação não pode ser desfeita.', ()=>{
@@ -2402,7 +2538,7 @@ function renderPerformance(root){
   CHART_REGISTRY['drawdown'] = safeMakeChart(document.getElementById('chartDrawdown'), {
     type:'line',
     data:{ labels: dd.series.map(s=>s.label), datasets:[{ label:'Drawdown %', data:dd.series.map(s=>s.drawdown), borderColor:c.negative, backgroundColor:c.negative+'22', fill:true, tension:.2, pointRadius:0 }]},
-    options: Object.assign(baseChartOptions(c,{}), {plugins:{legend:{display:false}}})
+    options: baseChartOptions(c,{legend:false})
   });
   drawBenchmarkChart();
 }
@@ -2692,7 +2828,7 @@ function renderDiversificacao(root){
   const topAssets = assetMetrics.slice(0,10);
   CHART_REGISTRY['divAsset'] = safeMakeChart(document.getElementById('chartDivAsset'), {
     type:'bar', data:{ labels: topAssets.map(m=>m.asset.name), datasets:[{label:'Valor', data:topAssets.map(m=>m.currentValue), backgroundColor:c.palette, borderRadius:5}]},
-    options: Object.assign(baseChartOptions(c,{currency:true}), {indexAxis:'y', plugins:{legend:{display:false}}})
+    options: Object.assign(baseChartOptions(c,{currency:true, horizontal:true, legend:false}), {indexAxis:'y'})
   });
   destroyChart('divInst');
   CHART_REGISTRY['divInst'] = safeMakeChart(document.getElementById('chartDivInst'), {
@@ -2812,7 +2948,7 @@ function renderGerirAtivos(root){
       <div class="card-header-row">
         <h2 id="manageTitle"></h2>
         <div style="display:flex;gap:8px;">
-          ${classById(MANAGE_TAB) && !classById(MANAGE_TAB).system ? `<button class="btn btn-sm btn-danger" id="delCategoryBtn">${icon('trash',14)} Eliminar categoria</button>` : ''}
+          ${classById(MANAGE_TAB) && !classById(MANAGE_TAB).system ? `<button class="btn btn-sm" id="editCategoryBtn">${icon('edit',14)} Editar categoria</button><button class="btn btn-sm btn-danger" id="delCategoryBtn">${icon('trash',14)} Eliminar categoria</button>` : ''}
           <button class="btn btn-primary btn-sm" id="manageAddBtn">${icon('plus',14)} Adicionar</button>
         </div>
       </div>
@@ -2820,8 +2956,10 @@ function renderGerirAtivos(root){
     </div>`;
   document.getElementById('manageTitle').textContent = (classById(MANAGE_TAB)||{}).name || MANAGE_TAB;
   document.querySelectorAll('#manageTabs [data-tab]').forEach(btn=> btn.onclick = ()=>{ MANAGE_TAB = btn.dataset.tab; renderGerirAtivos(root); });
-  document.getElementById('addCategoryTab').onclick = openCategoryModal;
+  document.getElementById('addCategoryTab').onclick = ()=> openCategoryModal();
   document.getElementById('manageAddBtn').onclick = ()=> openAssetModal(null, MANAGE_TAB);
+  const editBtn = document.getElementById('editCategoryBtn');
+  if(editBtn) editBtn.onclick = ()=> openCategoryModal(MANAGE_TAB);
   const delBtn = document.getElementById('delCategoryBtn');
   if(delBtn) delBtn.onclick = ()=>{
     const hasAssets = STATE.assets.some(a=>a.classId===MANAGE_TAB);
@@ -2834,21 +2972,38 @@ function renderGerirAtivos(root){
   const metrics = computeAllAssetMetrics().filter(m=>m.asset.classId===MANAGE_TAB);
   renderAssetTable(document.getElementById('manageTableWrap'), metrics, MANAGE_TAB);
 }
-function openCategoryModal(){
+function openCategoryModal(editId){
+  const editing = !!editId;
+  const ec = editing ? classById(editId) : null;
+  const currentUsesQty = editing ? (ec.usesQty!==false) : true;
   openModal(`
-    <div class="modal-header"><h3>Nova categoria de investimento</h3><button class="modal-close">${icon('x',18)}</button></div>
+    <div class="modal-header"><h3>${editing?'Editar categoria':'Nova categoria de investimento'}</h3><button class="modal-close">${icon('x',18)}</button></div>
     <div class="modal-body">
-      <div class="field"><label>Nome da categoria *</label><input type="text" id="catName" placeholder="Ex: Criptomoedas"></div>
-      <div class="field" style="margin-top:10px;"><label>Cor identificativa</label><input type="text" id="catColor" value="#5B6472" placeholder="#RRGGBB"></div>
+      <div class="field"><label>Nome da categoria *</label><input type="text" id="catName" placeholder="Ex: Criptomoedas" value="${editing?escapeHtml(ec.name):''}"></div>
+      <div class="field" style="margin-top:10px;"><label>Cor identificativa</label><input type="text" id="catColor" value="${editing?escapeHtml(ec.color||'#5B6472'):'#5B6472'}" placeholder="#RRGGBB"></div>
+      <div class="field" style="margin-top:10px;">
+        <label>Como calcular o valor dos ativos desta categoria? <span class="tooltip-i" data-tip="Quantidade × preço: indica quantas unidades comprou e a que preço (ideal para ações, ETFs, criptomoedas). Valor manual: não há 'unidades' — indica diretamente o valor atual do ativo (ideal para juros, P2P, poupanças ou qualquer dinheiro sem cotação).">i</span></label>
+        <select id="catUsesQty">
+          <option value="1" ${currentUsesQty?'selected':''}>Quantidade × preço (ex: ações, ETFs, criptomoedas)</option>
+          <option value="0" ${!currentUsesQty?'selected':''}>Valor manual (ex: juros, P2P, poupança, outros)</option>
+        </select>
+      </div>
     </div>
-    <div class="modal-footer"><button class="btn" id="catCancel">Cancelar</button><button class="btn btn-primary" id="catSave">Criar categoria</button></div>`);
+    <div class="modal-footer"><button class="btn" id="catCancel">Cancelar</button><button class="btn btn-primary" id="catSave">${editing?'Guardar alterações':'Criar categoria'}</button></div>`);
   document.getElementById('catCancel').onclick = closeModal;
   document.getElementById('catSave').onclick = ()=>{
     const name = document.getElementById('catName').value.trim();
     if(!name){ toast('Indique um nome.','err'); return; }
-    const id = uid('class');
-    STATE.classes.push({id, name, color: document.getElementById('catColor').value || '#5B6472', system:false});
-    saveState(); closeModal(); toast('Categoria criada.','ok'); MANAGE_TAB = id; navigate('gerir-ativos');
+    const color = document.getElementById('catColor').value || '#5B6472';
+    const usesQty = document.getElementById('catUsesQty').value === '1';
+    if(editing){
+      ec.name = name; ec.color = color; ec.usesQty = usesQty;
+      saveState(); closeModal(); toast('Categoria atualizada.','ok'); navigate('gerir-ativos');
+    } else {
+      const id = uid('class');
+      STATE.classes.push({id, name, color, system:false, usesQty});
+      saveState(); closeModal(); toast('Categoria criada.','ok'); MANAGE_TAB = id; navigate('gerir-ativos');
+    }
   };
 }
 
@@ -2963,10 +3118,7 @@ function renderDefinicoes(root){
   renderBenchList();
 
   document.getElementById('exportJsonBtn').onclick = ()=>{
-    const blob = new Blob([JSON.stringify(STATE,null,2)], {type:'application/json'});
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a'); a.href=url; a.download=`portfolio-backup-${todayISO()}.json`; document.body.appendChild(a); a.click(); a.remove();
-    URL.revokeObjectURL(url); toast('Backup exportado.','ok');
+    saveFileSmart(JSON.stringify(STATE,null,2), `portfolio-backup-${todayISO()}.json`, 'application/json');
   };
   document.getElementById('exportAllCsvBtn').onclick = ()=>{ exportAssetsCsv();
     setTimeout(()=>{
