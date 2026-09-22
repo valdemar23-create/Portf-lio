@@ -1,0 +1,3102 @@
+<!DOCTYPE html>
+<html lang="pt-PT">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1">
+<title>Portfólio Financeiro</title>
+
+<!-- PWA: permite "Adicionar ao ecrã principal" / instalar como aplicação, com ícone próprio
+     e sem a barra de endereço do browser, e ativa o cache offline via service worker. -->
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#0f766e">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Portfólio">
+<link rel="apple-touch-icon" href="icon-192.png">
+<link rel="icon" href="icon-192.png" type="image/png">
+<!-- Chart.js carregado de forma NÃO bloqueante (async): a interface (sidebar, cartões, tabelas, valores)
+     aparece imediatamente, mesmo em ligações lentas ou sem rede, sem esperar por este ficheiro nem pelo
+     evento DOMContentLoaded. Os gráficos ficam disponíveis assim que a biblioteca terminar de carregar
+     (ver __chartLoaded() mais abaixo); se falhar, cada gráfico mostra um aviso em vez de travar a aplicação.
+     Não são usadas fontes externas (Google Fonts) precisamente para que a app abra sempre rápido e funcione
+     também offline depois da primeira abertura. -->
+<script async src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"
+  onload="window.__chartLoaded && window.__chartLoaded();"
+  onerror="this.onerror=null;var s=document.createElement('script');s.src='https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js';s.onload=function(){window.__chartLoaded && window.__chartLoaded();};document.head.appendChild(s);"></script>
+<style>
+/* ============================================================
+   DESIGN TOKENS
+   Paleta: fundo neutro frio, tinta profunda como texto,
+   acento esmeralda/petróleo para ações e positivos,
+   vermelho terracota abafado para negativos.
+   Tipografia: fontes nativas do sistema operativo (sem pedidos de rede a
+   Google Fonts), com uma família tabular para os números — dá um ar de
+   "livro-razão" / terminal, apropriado a finanças, e garante que a app
+   abre instantaneamente mesmo offline ou com ligação lenta.
+   ============================================================ */
+:root{
+  --bg:#F5F6F8;
+  --bg-elevated:#FFFFFF;
+  --bg-sunken:#ECEEF2;
+  --ink:#111827;
+  --ink-soft:#4B5567;
+  --ink-faint:#8A93A3;
+  --border:#E2E5EA;
+  --border-strong:#CDD2DB;
+  --accent:#0E6E5C;
+  --accent-soft:#E4F2EE;
+  --accent-ink:#08493D;
+  --positive:#12805F;
+  --positive-soft:#E3F3EC;
+  --negative:#B5432F;
+  --negative-soft:#FBEAE6;
+  --warning:#B5811F;
+  --warning-soft:#FBF1DE;
+  --focus:#0E6E5C;
+  --sidebar-bg:#111827;
+  --sidebar-ink:#C9CFDA;
+  --sidebar-ink-active:#FFFFFF;
+  --sidebar-border:#1F2937;
+  --radius-sm:6px;
+  --radius-md:10px;
+  --radius-lg:14px;
+  --shadow-card:0 1px 2px rgba(17,24,39,.04), 0 1px 1px rgba(17,24,39,.03);
+  --font-ui:system-ui,-apple-system,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;
+  --font-num:ui-monospace,'SFMono-Regular','Cascadia Mono','Segoe UI Mono',Consolas,'Liberation Mono',Menlo,monospace;
+}
+:root[data-theme="dark"]{
+  --bg:#0B0F17;
+  --bg-elevated:#131A26;
+  --bg-sunken:#0E141F;
+  --ink:#EDEFF3;
+  --ink-soft:#A9B1C0;
+  --ink-faint:#6B7385;
+  --border:#232B3A;
+  --border-strong:#2E3745;
+  --accent:#2FB495;
+  --accent-soft:#12251F;
+  --accent-ink:#7BE0C6;
+  --positive:#2FB495;
+  --positive-soft:#12251F;
+  --negative:#E17A63;
+  --negative-soft:#2A1712;
+  --warning:#E0B655;
+  --warning-soft:#2A2312;
+  --sidebar-bg:#080B11;
+  --sidebar-ink:#8B93A5;
+  --sidebar-ink-active:#FFFFFF;
+  --sidebar-border:#1A2029;
+  --shadow-card:0 1px 2px rgba(0,0,0,.3);
+}
+
+*,*::before,*::after{box-sizing:border-box;}
+html,body{height:100%;}
+body{
+  margin:0;
+  font-family:var(--font-ui);
+  background:var(--bg);
+  color:var(--ink);
+  -webkit-font-smoothing:antialiased;
+  font-size:14px;
+  line-height:1.5;
+}
+.num{font-family:var(--font-num);font-variant-numeric:tabular-nums;}
+a{color:inherit;}
+button{font-family:var(--font-ui);}
+::selection{background:var(--accent-soft);color:var(--accent-ink);}
+
+/* ---------- Layout shell ---------- */
+#app{display:flex;min-height:100vh;}
+
+.sidebar{
+  width:236px;flex-shrink:0;background:var(--sidebar-bg);
+  color:var(--sidebar-ink);display:flex;flex-direction:column;
+  position:fixed;top:0;bottom:0;left:0;z-index:50;
+  transition:transform .2s ease;
+}
+.sidebar-brand{
+  display:flex;align-items:center;gap:10px;padding:20px 18px 14px 18px;
+  border-bottom:1px solid var(--sidebar-border);
+}
+.sidebar-brand .mark{
+  width:30px;height:30px;border-radius:8px;background:linear-gradient(135deg,#2FB495,#0E6E5C);
+  display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;font-size:14px;
+  font-family:var(--font-num);
+}
+.sidebar-brand .name{font-weight:700;color:#fff;font-size:14.5px;letter-spacing:.1px;}
+.sidebar-brand .sub{font-size:11px;color:var(--sidebar-ink);margin-top:1px;}
+.sidebar-nav{flex:1;overflow-y:auto;padding:10px 10px;}
+.sidebar-section-label{font-size:10.5px;color:#5C6577;padding:14px 10px 6px;font-weight:600;}
+.nav-item{
+  display:flex;align-items:center;gap:10px;padding:9px 10px;border-radius:8px;
+  cursor:pointer;color:var(--sidebar-ink);font-size:13.5px;font-weight:500;margin-bottom:1px;
+  border:none;background:none;width:100%;text-align:left;
+}
+.nav-item svg{width:17px;height:17px;flex-shrink:0;opacity:.85;}
+.nav-item:hover{background:rgba(255,255,255,.06);color:#fff;}
+.nav-item.active{background:rgba(47,180,149,.16);color:#fff;}
+.nav-item.active svg{opacity:1;color:#3FCDA8;}
+.sidebar-footer{padding:12px 16px 16px;border-top:1px solid var(--sidebar-border);font-size:10.5px;color:#5C6577;line-height:1.5;}
+
+.main{margin-left:236px;flex:1;min-width:0;display:flex;flex-direction:column;min-height:100vh;}
+.topbar{
+  position:sticky;top:0;z-index:40;background:var(--bg);
+  border-bottom:1px solid var(--border);
+  display:flex;align-items:center;gap:14px;padding:14px 28px;
+  backdrop-filter:blur(6px);
+}
+.topbar-title{font-size:18px;font-weight:700;letter-spacing:-.2px;}
+.topbar-sub{font-size:12px;color:var(--ink-faint);margin-top:1px;}
+.topbar-spacer{flex:1;}
+.menu-toggle{display:none;background:none;border:1px solid var(--border);border-radius:8px;padding:7px;cursor:pointer;color:var(--ink);}
+
+.content{padding:24px 28px 60px;flex:1;}
+.page{display:none;}
+.page.active{display:block;animation:fadein .18s ease;}
+@keyframes fadein{from{opacity:0;transform:translateY(3px);}to{opacity:1;transform:none;}}
+
+/* ---------- Buttons ---------- */
+.btn{
+  display:inline-flex;align-items:center;gap:6px;justify-content:center;
+  font-size:13px;font-weight:600;padding:8px 14px;border-radius:8px;border:1px solid var(--border-strong);
+  background:var(--bg-elevated);color:var(--ink);cursor:pointer;white-space:nowrap;
+  transition:background .12s,border-color .12s;
+}
+.btn:hover{background:var(--bg-sunken);}
+.btn:focus-visible{outline:2px solid var(--focus);outline-offset:1px;}
+.btn-primary{background:var(--accent);border-color:var(--accent);color:#fff;}
+.btn-primary:hover{background:var(--accent-ink);border-color:var(--accent-ink);}
+.btn-danger{background:var(--bg-elevated);border-color:var(--negative);color:var(--negative);}
+.btn-danger:hover{background:var(--negative-soft);}
+.btn-sm{padding:5px 10px;font-size:12px;border-radius:6px;}
+.btn-ghost{background:none;border-color:transparent;}
+.btn-ghost:hover{background:var(--bg-sunken);}
+.btn-icon{padding:7px;border-radius:7px;}
+.btn:disabled{opacity:.45;cursor:not-allowed;}
+
+/* ---------- Cards / grid ---------- */
+.grid{display:grid;gap:14px;}
+.grid-stats{grid-template-columns:repeat(auto-fit,minmax(200px,1fr));}
+.grid-2{grid-template-columns:1fr 1fr;}
+.grid-3{grid-template-columns:1fr 1fr 1fr;}
+@media (max-width:1000px){.grid-2,.grid-3{grid-template-columns:1fr;}}
+
+.card{
+  background:var(--bg-elevated);border:1px solid var(--border);border-radius:var(--radius-lg);
+  padding:18px;box-shadow:var(--shadow-card);
+}
+.card-title{font-size:13px;font-weight:600;color:var(--ink-soft);margin:0 0 10px;display:flex;align-items:center;justify-content:space-between;}
+.card-header-row{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;gap:10px;flex-wrap:wrap;}
+.card-header-row h2{margin:0;font-size:15.5px;}
+
+.stat-card{padding:16px 18px;}
+.stat-label{font-size:12px;color:var(--ink-faint);font-weight:600;margin-bottom:6px;display:flex;align-items:center;gap:6px;}
+.stat-value{font-family:var(--font-num);font-size:22px;font-weight:600;letter-spacing:-.3px;}
+.stat-sub{font-size:12px;margin-top:5px;font-family:var(--font-num);font-weight:500;}
+.stat-sub.pos{color:var(--positive);}
+.stat-sub.neg{color:var(--negative);}
+.stat-sub.neu{color:var(--ink-faint);}
+.trend-pill{display:inline-flex;align-items:center;gap:3px;font-size:11.5px;font-weight:600;padding:2px 7px;border-radius:20px;}
+.trend-pill.pos{background:var(--positive-soft);color:var(--positive);}
+.trend-pill.neg{background:var(--negative-soft);color:var(--negative);}
+.trend-pill.neu{background:var(--bg-sunken);color:var(--ink-faint);}
+
+/* ---------- Tables ---------- */
+.table-wrap{overflow-x:auto;}
+table{width:100%;border-collapse:collapse;font-size:13px;}
+th{
+  text-align:left;font-size:11px;text-transform:none;color:var(--ink-faint);font-weight:600;
+  padding:8px 10px;border-bottom:1px solid var(--border);white-space:nowrap;cursor:pointer;user-select:none;
+}
+th span.arrow{opacity:.5;margin-left:3px;font-size:10px;}
+td{padding:9px 10px;border-bottom:1px solid var(--border);white-space:nowrap;}
+tbody tr:hover{background:var(--bg-sunken);}
+/* Destaque visual dos movimentos de Depósito (entrada de dinheiro) e Levantamento (saída de dinheiro)
+   na tabela de Movimentos, sem alterar a cor própria dos badges de classe nem dos botões de ação. */
+tr.row-deposit td:not(.badge-cell):not(.actions-cell){ font-weight:700; color:var(--positive); }
+tr.row-withdraw td:not(.badge-cell):not(.actions-cell){ font-weight:700; color:var(--negative); }
+td.num,th.num{text-align:right;font-family:var(--font-num);}
+.badge{display:inline-flex;align-items:center;padding:2px 8px;border-radius:20px;font-size:11px;font-weight:600;}
+.badge-etf{background:#E3ECFB;color:#1E4FA0;}
+.badge-p2p{background:#F3E8FB;color:#6C2FA6;}
+.badge-ppr{background:#FBEFE0;color:#9A5B10;}
+.badge-deposito{background:#E1F4EE;color:#0E6E5C;}
+.badge-outro{background:var(--bg-sunken);color:var(--ink-soft);}
+:root[data-theme="dark"] .badge-etf{background:#152238;color:#8FB6F5;}
+:root[data-theme="dark"] .badge-p2p{background:#241a30;color:#CBA3EE;}
+:root[data-theme="dark"] .badge-ppr{background:#2a2013;color:#E3B36A;}
+:root[data-theme="dark"] .badge-deposito{background:#0f241d;color:#6FD9B8;}
+:root[data-theme="dark"] .badge-outro{background:#1b2230;color:#A9B1C0;}
+
+.pos{color:var(--positive);}
+.neg{color:var(--negative);}
+.muted{color:var(--ink-faint);}
+
+/* ---------- Forms ---------- */
+.form-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;}
+.form-grid.single{grid-template-columns:1fr;}
+@media (max-width:640px){.form-grid{grid-template-columns:1fr;}}
+.field{display:flex;flex-direction:column;gap:5px;}
+.field.span2{grid-column:1/-1;}
+.field label{font-size:12px;font-weight:600;color:var(--ink-soft);}
+.field .hint{font-size:11px;color:var(--ink-faint);}
+input[type=text],input[type=number],input[type=date],input[type=password],select,textarea{
+  font-family:var(--font-ui);font-size:13.5px;padding:8px 10px;border-radius:8px;border:1px solid var(--border-strong);
+  background:var(--bg-elevated);color:var(--ink);width:100%;
+}
+input.num-input{font-family:var(--font-num);}
+textarea{resize:vertical;min-height:60px;}
+input:focus,select:focus,textarea:focus{outline:2px solid var(--focus);outline-offset:0;border-color:var(--focus);}
+.checkbox-row{display:flex;align-items:center;gap:8px;font-size:13px;}
+.field-error{font-size:11.5px;color:var(--negative);min-height:14px;}
+input.invalid,select.invalid{border-color:var(--negative);}
+
+/* ---------- Modal ---------- */
+.modal-overlay{
+  position:fixed;inset:0;background:rgba(10,14,20,.5);display:none;align-items:flex-start;justify-content:center;
+  z-index:100;padding:5vh 16px;overflow-y:auto;
+}
+.modal-overlay.open{display:flex;}
+.modal{
+  background:var(--bg-elevated);border-radius:var(--radius-lg);width:100%;max-width:560px;
+  border:1px solid var(--border);box-shadow:0 20px 60px rgba(0,0,0,.25);
+  animation:modalIn .15s ease;
+}
+.modal.wide{max-width:760px;}
+@keyframes modalIn{from{opacity:0;transform:translateY(8px) scale(.98);}to{opacity:1;transform:none;}}
+.modal-header{display:flex;align-items:center;justify-content:space-between;padding:16px 20px;border-bottom:1px solid var(--border);}
+.modal-header h3{margin:0;font-size:15.5px;}
+.modal-body{padding:20px;max-height:70vh;overflow-y:auto;}
+.modal-footer{display:flex;justify-content:flex-end;gap:10px;padding:14px 20px;border-top:1px solid var(--border);}
+.modal-close{background:none;border:none;cursor:pointer;color:var(--ink-faint);padding:4px;border-radius:6px;}
+.modal-close:hover{background:var(--bg-sunken);color:var(--ink);}
+
+/* ---------- Misc components ---------- */
+.empty-state{
+  text-align:center;padding:46px 20px;color:var(--ink-faint);
+}
+.empty-state .icon{font-size:30px;margin-bottom:10px;opacity:.5;}
+.empty-state h4{margin:0 0 4px;color:var(--ink-soft);font-size:14px;}
+.empty-state p{margin:0;font-size:12.5px;}
+
+.toast-wrap{position:fixed;bottom:20px;right:20px;z-index:200;display:flex;flex-direction:column;gap:8px;}
+.toast{
+  background:var(--ink);color:#fff;padding:11px 16px;border-radius:9px;font-size:13px;font-weight:500;
+  box-shadow:0 8px 24px rgba(0,0,0,.2);display:flex;align-items:center;gap:8px;min-width:220px;
+  animation:toastIn .18s ease;
+}
+:root[data-theme="dark"] .toast{background:#F5F6F8;color:#111827;}
+.toast.err{background:var(--negative);}
+.toast.ok{background:var(--positive);}
+@keyframes toastIn{from{opacity:0;transform:translateY(8px);}to{opacity:1;transform:none;}}
+
+.tag-filter-bar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:16px;}
+.tag-filter-bar select,.tag-filter-bar input{width:auto;min-width:130px;}
+.chip{
+  padding:6px 12px;border-radius:20px;border:1px solid var(--border-strong);background:var(--bg-elevated);
+  font-size:12.5px;font-weight:600;cursor:pointer;color:var(--ink-soft);
+}
+.chip.active{background:var(--accent);color:#fff;border-color:var(--accent);}
+
+.tabs{display:flex;gap:4px;border-bottom:1px solid var(--border);margin-bottom:16px;flex-wrap:wrap;}
+.tab-btn{
+  padding:9px 14px;font-size:13px;font-weight:600;color:var(--ink-faint);background:none;border:none;
+  cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-1px;
+}
+.tab-btn.active{color:var(--accent);border-bottom-color:var(--accent);}
+
+.progress-bar{height:8px;border-radius:5px;background:var(--bg-sunken);overflow:hidden;}
+.progress-bar > div{height:100%;background:var(--accent);border-radius:5px;transition:width .3s;}
+
+.chart-box{position:relative;height:280px;}
+.chart-box.tall{height:340px;}
+.chart-box.short{height:200px;}
+
+.tooltip-i{
+  display:inline-flex;align-items:center;justify-content:center;width:14px;height:14px;border-radius:50%;
+  background:var(--bg-sunken);color:var(--ink-faint);font-size:10px;font-weight:700;cursor:help;position:relative;
+}
+.tooltip-i:hover::after{
+  content:attr(data-tip);position:absolute;bottom:130%;left:50%;transform:translateX(-50%);
+  background:var(--ink);color:#fff;padding:8px 10px;border-radius:7px;font-size:11.5px;font-weight:500;
+  width:220px;white-space:normal;z-index:60;box-shadow:0 8px 20px rgba(0,0,0,.25);line-height:1.4;
+}
+:root[data-theme="dark"] .tooltip-i:hover::after{background:#F5F6F8;color:#111827;}
+
+.section-divider{height:1px;background:var(--border);margin:22px 0;}
+.footer-note{
+  text-align:center;font-size:11.5px;color:var(--ink-faint);padding:24px 0 6px;
+}
+.footer-note svg{width:12px;height:12px;vertical-align:-1px;margin-right:4px;}
+
+.calendar-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:6px;}
+.calendar-cell{
+  min-height:70px;border:1px solid var(--border);border-radius:8px;padding:6px;font-size:11px;background:var(--bg-elevated);
+  cursor:pointer;
+}
+.calendar-cell.empty{background:transparent;border-color:transparent;cursor:default;}
+.calendar-cell .day-num{font-weight:700;font-size:12px;margin-bottom:3px;}
+.calendar-cell.today{border-color:var(--accent);}
+.cal-dot{width:6px;height:6px;border-radius:50%;display:inline-block;margin-right:2px;}
+.calendar-cell:hover:not(.empty){background:var(--bg-sunken);}
+.calendar-weekday{font-size:11px;font-weight:700;color:var(--ink-faint);text-align:center;padding-bottom:4px;}
+
+.demo-banner{
+  background:var(--warning-soft);color:var(--warning);border:1px solid var(--warning);border-radius:10px;
+  padding:10px 14px;font-size:12.5px;font-weight:600;margin-bottom:18px;display:flex;align-items:center;gap:8px;
+}
+
+.kv-list{display:flex;flex-direction:column;gap:8px;}
+.kv-row{display:flex;justify-content:space-between;font-size:13px;padding:4px 0;border-bottom:1px dashed var(--border);}
+.kv-row .k{color:var(--ink-faint);}
+.kv-row .v{font-family:var(--font-num);font-weight:600;}
+
+.alert-item{
+  display:flex;align-items:flex-start;gap:10px;padding:11px 12px;border-radius:9px;border:1px solid var(--border);
+  margin-bottom:8px;font-size:12.5px;
+}
+.alert-item.crit{background:var(--negative-soft);border-color:var(--negative);}
+.alert-item.warn{background:var(--warning-soft);border-color:var(--warning);}
+
+@media (max-width:900px){
+  .sidebar{transform:translateX(-100%);}
+  .sidebar.open{transform:translateX(0);}
+  .main{margin-left:0;}
+  .menu-toggle{display:inline-flex;align-items:center;}
+  .content{padding:18px 14px 50px;}
+  .topbar{padding:12px 14px;}
+  .grid-stats{grid-template-columns:repeat(auto-fit,minmax(150px,1fr));}
+  .stat-value{font-size:19px;}
+}
+.sidebar-scrim{position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:45;display:none;}
+.sidebar-scrim.open{display:block;}
+</style>
+</head>
+<body>
+<div id="app"></div>
+<div class="toast-wrap" id="toastWrap"></div>
+<div class="modal-overlay" id="modalOverlay">
+  <div class="modal" id="modalBox"></div>
+</div>
+<div class="sidebar-scrim" id="sidebarScrim"></div>
+<script>
+/* =====================================================================
+   PORTFÓLIO FINANCEIRO — aplicação local de gestão de património
+   Ficheiro único, sem backend, sem dependências além de Chart.js (CDN).
+   Todos os dados ficam apenas no localStorage deste browser.
+   ===================================================================== */
+'use strict';
+
+/* ---------------------------------------------------------------------
+   1. UTILITÁRIOS GERAIS
+   --------------------------------------------------------------------- */
+const STORAGE_KEY = 'pf_portfolio_data_v1';
+const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+function uid(prefix){ return (prefix||'id') + '_' + Math.random().toString(36).slice(2,9) + Date.now().toString(36).slice(-4); }
+/* Formata uma data como YYYY-MM-DD usando os componentes LOCAIS (getFullYear/getMonth/getDate) — NUNCA
+   toISOString(), que converte para UTC e pode "recuar" um dia em fusos horários com offset positivo em
+   relação a UTC (como Portugal no horário de verão, ou qualquer fuso a Este de Greenwich) — bug real
+   detetado nesta versão: causava a perda de meses inteiros nos gráficos de evolução para a generalidade
+   dos utilizadores na Europa. */
+function fmtLocalISO(d){
+  const y = d.getFullYear();
+  const m = String(d.getMonth()+1).padStart(2,'0');
+  const day = String(d.getDate()).padStart(2,'0');
+  return `${y}-${m}-${day}`;
+}
+function todayISO(){ return fmtLocalISO(new Date()); }
+/* Avança uma chave de mês "YYYY-MM" para o mês seguinte usando apenas aritmética inteira — nunca cria um
+   objeto Date para este cálculo, precisamente para nunca reintroduzir o bug de fuso horário acima. */
+function nextMonthKey(mk){
+  let [y,m] = mk.split('-').map(Number);
+  m += 1;
+  if(m > 12){ m = 1; y += 1; }
+  return `${y}-${String(m).padStart(2,'0')}`;
+}
+function clamp(n,min,max){ return Math.max(min,Math.min(max,n)); }
+function num(v){ const n = typeof v === 'number' ? v : parseFloat(String(v).replace(',','.')); return isNaN(n) ? 0 : n; }
+function monthKey(iso){ return (iso||'').slice(0,7); } // YYYY-MM
+function daysBetween(a,b){ return (new Date(b) - new Date(a)) / 86400000; }
+
+const CURRENCY_SYMBOLS = { EUR:'€', USD:'$', GBP:'£', CHF:'CHF' };
+
+function fmtMoney(value, currency){
+  currency = currency || (STATE && STATE.settings ? STATE.settings.baseCurrency : 'EUR');
+  const sign = value < 0 ? '-' : '';
+  const abs = Math.abs(value || 0);
+  const formatted = abs.toLocaleString('pt-PT', {minimumFractionDigits:2, maximumFractionDigits:2});
+  const symbol = CURRENCY_SYMBOLS[currency] || currency || '€';
+  return `${sign}${symbol}\u00A0${formatted}`;
+}
+function fmtNumber(value, decimals){
+  decimals = decimals === undefined ? 2 : decimals;
+  return (value || 0).toLocaleString('pt-PT', {minimumFractionDigits:decimals, maximumFractionDigits:decimals});
+}
+function fmtPct(value, decimals){
+  decimals = decimals === undefined ? 2 : decimals;
+  const sign = value > 0 ? '+' : '';
+  return `${sign}${(value||0).toLocaleString('pt-PT',{minimumFractionDigits:decimals,maximumFractionDigits:decimals})}%`;
+}
+function fmtDate(iso){
+  if(!iso) return '—';
+  const d = new Date(iso + 'T00:00:00');
+  if(isNaN(d)) return iso;
+  return d.toLocaleDateString('pt-PT', {day:'2-digit', month:'2-digit', year:'numeric'});
+}
+function fmtMonthLabel(mk){
+  // mk = 'YYYY-MM'
+  const [y,m] = mk.split('-');
+  const d = new Date(parseInt(y), parseInt(m)-1, 1);
+  return d.toLocaleDateString('pt-PT', {month:'short', year:'2-digit'}).replace('.','');
+}
+function escapeHtml(str){
+  return String(str === undefined || str === null ? '' : str).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+function toast(msg, type){
+  const wrap = document.getElementById('toastWrap');
+  const el = document.createElement('div');
+  el.className = 'toast' + (type ? ' ' + type : '');
+  el.textContent = msg;
+  wrap.appendChild(el);
+  setTimeout(()=>{ el.style.opacity='0'; el.style.transition='opacity .25s'; setTimeout(()=>el.remove(),250); }, 2800);
+}
+
+/* Newton-Raphson XIRR sobre séries de fluxos de caixa {date:'YYYY-MM-DD', amount:Number} */
+function computeXIRR(flows){
+  if(!flows || flows.length < 2) return null;
+  const hasPos = flows.some(f=>f.amount>0), hasNeg = flows.some(f=>f.amount<0);
+  if(!hasPos || !hasNeg) return null;
+  const t0 = new Date(flows[0].date).getTime();
+  const years = flows.map(f => (new Date(f.date).getTime() - t0) / (365.25*86400000));
+  function npv(rate){
+    let s = 0;
+    for(let i=0;i<flows.length;i++){ s += flows[i].amount / Math.pow(1+rate, years[i]); }
+    return s;
+  }
+  function dnpv(rate){
+    let s = 0;
+    for(let i=0;i<flows.length;i++){ s += -years[i]*flows[i].amount / Math.pow(1+rate, years[i]+1); }
+    return s;
+  }
+  let rate = 0.1;
+  for(let i=0;i<100;i++){
+    const f = npv(rate), d = dnpv(rate);
+    if(Math.abs(d) < 1e-10) break;
+    const next = rate - f/d;
+    if(!isFinite(next)) break;
+    if(Math.abs(next-rate) < 1e-7){ rate = next; break; }
+    rate = clamp(next, -0.9999, 10);
+  }
+  if(!isFinite(rate) || Math.abs(npv(rate)) > Math.max(1, Math.abs(flows[0].amount))*0.01) {
+    // fallback bisseção
+    let lo=-0.9, hi=5, flo=npv(lo), fhi=npv(hi);
+    if(flo*fhi > 0) return rate*100;
+    for(let i=0;i<200;i++){
+      const mid=(lo+hi)/2, fmid=npv(mid);
+      if(Math.abs(fmid) < 1e-6) return mid*100;
+      if(flo*fmid < 0){ hi=mid; fhi=fmid; } else { lo=mid; flo=fmid; }
+    }
+    return ((lo+hi)/2)*100;
+  }
+  return rate*100;
+}
+
+/* ---------------------------------------------------------------------
+   2. MODELO DE DADOS / ESTADO
+   --------------------------------------------------------------------- */
+const MOVEMENT_TYPES = ['Compra','Venda','Depósito','Levantamento','Dividendo','Juro','Bónus','Comissão','Reembolso de capital','Transferência','Reforço','Outro'];
+const CONTRIB_TYPES = ['Compra','Depósito','Reforço'];
+const WITHDRAW_TYPES = ['Venda','Levantamento','Reembolso de capital'];
+/* "Bónus" é dinheiro ou valor dado pela plataforma/ativo (ex: bónus de referência, promoção de boas-vindas)
+   — NUNCA foi dinheiro que o utilizador colocou, por isso nunca conta como contribuição/reforço, mas conta
+   como rendimento (tal como Dividendo/Juro), aumentando o ganho sem inflacionar o capital investido. */
+const BONUS_TYPE = 'Bónus';
+
+function defaultClasses(){
+  return [
+    {id:'etf', name:'ETF', color:'#1E4FA0', system:true},
+    {id:'p2p', name:'P2P', color:'#6C2FA6', system:true},
+    {id:'ppr', name:'PPR', color:'#9A5B10', system:true},
+    {id:'deposito', name:'Cofre Pessoal', color:'#0E6E5C', system:true},
+    {id:'outro', name:'Outro', color:'#5B6472', system:true},
+  ];
+}
+
+function defaultSettings(){
+  return {
+    portfolioName: 'O Meu Portfólio',
+    baseCurrency: 'EUR',
+    theme: 'light',
+    concentrationLimit: 25,
+    classConcentrationLimit: 60,
+    monthlyGoal: 150,
+    exchangeRates: { EUR:1, USD:0.93, GBP:1.17, CHF:1.04 },
+  };
+}
+
+function defaultAlerts(){
+  return [
+    {id:uid('al'), type:'asset_weight', label:'Ativo acima de X% do património', threshold:25, active:true},
+    {id:uid('al'), type:'class_weight', label:'Classe acima de X% do património', threshold:60, active:true},
+    {id:uid('al'), type:'negative_return', label:'Rentabilidade de um ativo negativa', threshold:0, active:true},
+    {id:uid('al'), type:'drawdown', label:'Queda (drawdown) superior a X%', threshold:15, active:true},
+    {id:uid('al'), type:'deposit_maturity', label:'Ativo do Cofre Pessoal a vencer em X dias', threshold:30, active:true},
+  ];
+}
+
+function emptyState(){
+  return {
+    version:1,
+    isDemo:true,
+    settings: defaultSettings(),
+    classes: defaultClasses(),
+    assets: [],
+    movements: [],
+    valuations: [], // histórico de valorização por ativo: {id, assetId, date, value, notes} — NÃO é um movimento de dinheiro
+    goals: [],
+    alerts: defaultAlerts(),
+    benchmarks: { SP500:[], MSCIWorld:[] },
+  };
+}
+
+function sanitizeState(){
+  // Blinda a aplicação contra dados corrompidos ou mal formados (ex: vindos de uma importação antiga,
+  // edição manual do localStorage, ou uma versão futura dos dados) — nunca deixa a app rebentar por
+  // causa disto; em vez de apagar dados do utilizador, corrige o que for corrigível.
+
+  // Migração one-off: quem já tinha dados guardados de uma versão anterior desta app tem a classe do
+  // sistema "deposito" gravada com o nome antigo "Depósito". Atualiza-a automaticamente para o novo nome
+  // "Cofre Pessoal" — mas só se ainda tiver exatamente o nome por omissão antigo, para nunca substituir
+  // um nome que o próprio utilizador tenha escolhido manualmente para essa categoria.
+  if(Array.isArray(STATE.classes)){
+    const dep = STATE.classes.find(c=>c.id==='deposito');
+    if(dep && dep.name === 'Depósito') dep.name = 'Cofre Pessoal';
+  }
+  if(Array.isArray(STATE.alerts)){
+    const depAlert = STATE.alerts.find(a=>a.type==='deposit_maturity');
+    if(depAlert && depAlert.label === 'Depósito a vencer em X dias') depAlert.label = 'Ativo do Cofre Pessoal a vencer em X dias';
+  }
+
+  if(!Array.isArray(STATE.assets)) STATE.assets = [];
+  STATE.assets = STATE.assets.filter(a=> a && typeof a==='object' && a.id);
+  STATE.assets.forEach(a=>{
+    if(!ISO_DATE_RE.test(a.firstDate)) a.firstDate = todayISO();
+    if(!a.classId) a.classId = STATE.classes[0] ? STATE.classes[0].id : 'outro';
+    a.currentValue = num(a.currentValue);
+    a.currentPrice = num(a.currentPrice);
+    if(!a.extra || typeof a.extra !== 'object') a.extra = {};
+  });
+  const validAssetIds = new Set(STATE.assets.map(a=>a.id));
+  if(!Array.isArray(STATE.movements)) STATE.movements = [];
+  STATE.movements = STATE.movements
+    .filter(m=> m && typeof m==='object' && validAssetIds.has(m.assetId))
+    .map(m=>{
+      if(!ISO_DATE_RE.test(m.date)) m.date = todayISO();
+      if(!MOVEMENT_TYPES.includes(m.type)) m.type = 'Outro';
+      if(!m.id) m.id = uid('mv');
+      m.quantity = num(m.quantity); m.price = num(m.price); m.value = num(m.value); m.commission = num(m.commission);
+      m.currency = CURRENCY_SYMBOLS[m.currency] ? m.currency : (STATE.settings.baseCurrency || 'EUR');
+      return m;
+    });
+
+  // Histórico de valorização: uma entrada por (ativo, data); se houver duplicados para a mesma data
+  // (ex: de uma importação), fica só a última. Nunca é tratado como movimento de dinheiro.
+  if(!Array.isArray(STATE.valuations)) STATE.valuations = [];
+  const valByKey = {};
+  STATE.valuations
+    .filter(v=> v && typeof v==='object' && validAssetIds.has(v.assetId) && ISO_DATE_RE.test(v.date))
+    .forEach(v=>{
+      if(!v.id) v.id = uid('val');
+      v.value = num(v.value);
+      valByKey[v.assetId+'|'+v.date] = v; // a última entrada processada vence, elimina duplicados
+    });
+  STATE.valuations = Object.values(valByKey);
+
+  if(!Array.isArray(STATE.goals)) STATE.goals = [];
+  if(!STATE.benchmarks || typeof STATE.benchmarks !== 'object') STATE.benchmarks = { SP500:[], MSCIWorld:[] };
+  ['SP500','MSCIWorld'].forEach(k=>{ if(!Array.isArray(STATE.benchmarks[k])) STATE.benchmarks[k] = []; });
+}
+
+let STATE = null;
+
+function loadState(){
+  try{
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if(raw){
+      const parsed = JSON.parse(raw);
+      // merge de segurança com defaults, caso faltem campos de versões antigas
+      STATE = Object.assign(emptyState(), parsed);
+      STATE.settings = Object.assign(defaultSettings(), parsed.settings||{});
+      STATE.settings.exchangeRates = Object.assign(defaultSettings().exchangeRates, (parsed.settings||{}).exchangeRates||{});
+      if(!STATE.classes || !STATE.classes.length) STATE.classes = defaultClasses();
+      if(!STATE.alerts || !STATE.alerts.length) STATE.alerts = defaultAlerts();
+      sanitizeState();
+      return;
+    }
+  }catch(e){ console.error('Falha ao ler dados guardados, a iniciar com dados de demonstração.', e); }
+  STATE = buildDemoState();
+  sanitizeState();
+}
+function saveState(){
+  try{
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(STATE));
+  }catch(e){
+    toast('Erro ao guardar dados localmente (localStorage cheio ou indisponível).', 'err');
+    console.error(e);
+  }
+}
+
+/* ---------------------------------------------------------------------
+   3. DADOS DE DEMONSTRAÇÃO
+   --------------------------------------------------------------------- */
+function buildDemoState(){
+  const s = emptyState();
+  s.isDemo = true;
+
+  const etfDefs = [
+    {ticker:'SXR8', name:'iShares Core S&P 500', isin:'IE00B5BMR087'},
+    {ticker:'QDVE', name:'iShares S&P 500 Info Tech', isin:'IE00BGL86Z12'},
+    {ticker:'EUNL', name:'iShares Core MSCI World', isin:'IE00B4L5Y983'},
+    {ticker:'VGWD', name:'Vanguard FTSE All-World Dist', isin:'IE00BK5BR626'},
+    {ticker:'MEUD', name:'Amundi MSCI Emerging Markets', isin:'LU1681045370'},
+  ];
+  const p2pDefs = ['Viainvest','Bondora','Maclear','Goparity'];
+
+  s.assets = [];
+  s.movements = [];
+
+  const brokers = ['Trade Republic','DEGIRO','XTB'];
+  let dcount=0;
+  etfDefs.forEach((e,i)=>{
+    const assetId = uid('asset');
+    s.assets.push({
+      id:assetId, classId:'etf', name:e.name, ticker:e.ticker, isin:e.isin,
+      institution: brokers[i%brokers.length], currency:'EUR', firstDate:'2024-01-15',
+      currentPrice: 0, currentValue: 0, notes:'Dados de demonstração', extra:{}
+    });
+    // compras mensais simuladas ao longo de ~14 meses
+    let basePrice = 60 + i*15;
+    for(let m=0;m<14;m++){
+      const d = new Date(2024,0+m,15+ (i%5));
+      if(d > new Date()) break;
+      const iso = fmtLocalISO(d);
+      const drift = 1 + (Math.sin(m/3 + i) * 0.06) + m*0.006;
+      const price = +(basePrice * drift).toFixed(2);
+      const qty = 2 + (i%3);
+      s.movements.push({
+        id:uid('mv'), date:iso, type:'Compra', classId:'etf', assetId, institution: brokers[i%brokers.length],
+        quantity: qty, price: price, value:+(qty*price).toFixed(2), commission:+(1+Math.random()).toFixed(2),
+        currency:'EUR', notes:'Reforço mensal (demo)'
+      });
+      if(m>0 && m%6===0){
+        s.movements.push({
+          id:uid('mv'), date:iso, type:'Dividendo', classId:'etf', assetId, institution: brokers[i%brokers.length],
+          quantity:0, price:0, value:+(8 + i*3 + Math.random()*10).toFixed(2), commission:0, currency:'EUR', notes:'Dividendo semestral (demo)'
+        });
+      }
+    }
+  });
+
+  p2pDefs.forEach((name,i)=>{
+    const assetId = uid('asset');
+    s.assets.push({
+      id:assetId, classId:'p2p', name:name, ticker:'', isin:'', institution:name, currency:'EUR',
+      firstDate:'2024-02-01', currentValue: 0, notes:'Dados de demonstração', extra:{ atraso:false }
+    });
+    for(let m=0;m<12;m++){
+      const d = new Date(2024,1+m,10);
+      if(d>new Date()) break;
+      const iso = fmtLocalISO(d);
+      if(m===0 || m%4===0){
+        s.movements.push({ id:uid('mv'), date:iso, type: m===0?'Depósito':'Reforço', classId:'p2p', assetId, institution:name,
+          quantity:0, price:0, value:+(150+i*40).toFixed(2), commission:0, currency:'EUR', notes:'Alocação de capital (demo)'});
+      }
+      s.movements.push({ id:uid('mv'), date:iso, type:'Juro', classId:'p2p', assetId, institution:name,
+        quantity:0, price:0, value:+(3+i*1.4+Math.random()*2).toFixed(2), commission:0, currency:'EUR', notes:'Juros mensais (demo)'});
+      if(m===0){
+        s.movements.push({ id:uid('mv'), date:iso, type:'Bónus', classId:'p2p', assetId, institution:name,
+          quantity:0, price:0, value:+(10+i*2).toFixed(2), commission:0, currency:'EUR', notes:'Bónus de boas-vindas da plataforma (demo)'});
+      }
+      if(m===7){
+        s.movements.push({ id:uid('mv'), date:iso, type:'Reembolso de capital', classId:'p2p', assetId, institution:name,
+          quantity:0, price:0, value:+(60+i*10).toFixed(2), commission:0, currency:'EUR', notes:'Reembolso parcial (demo)'});
+      }
+    }
+  });
+
+  // PPR
+  const pprId = uid('asset');
+  s.assets.push({ id:pprId, classId:'ppr', name:'PPR Crescimento', ticker:'', isin:'', institution:'Fidelidade', currency:'EUR',
+    firstDate:'2023-11-01', currentValue:0, notes:'Dados de demonstração', extra:{} });
+  s.movements.push({ id:uid('mv'), date:'2023-11-01', type:'Depósito', classId:'ppr', assetId:pprId, institution:'Fidelidade',
+    quantity:0, price:0, value:1000, commission:0, currency:'EUR', notes:'Subscrição inicial (demo)'});
+  for(let m=0;m<10;m++){
+    const d = new Date(2024,1+m,5);
+    if(d>new Date()) break;
+    s.movements.push({ id:uid('mv'), date:fmtLocalISO(d), type:'Reforço', classId:'ppr', assetId:pprId, institution:'Fidelidade',
+      quantity:0, price:0, value:100, commission:0, currency:'EUR', notes:'Reforço trimestral (demo)'});
+  }
+
+  // Cofre Pessoal
+  const depId = uid('asset');
+  s.assets.push({ id:depId, classId:'deposito', name:'Cofre Pessoal — Poupança', ticker:'', isin:'', institution:'Casa', currency:'EUR',
+    firstDate:'2024-03-01', currentValue:0, notes:'Dados de demonstração',
+    extra:{ dataInicio:'2024-03-01', dataVencimento:'2026-03-01', taxaJuro:3.2 } });
+  s.movements.push({ id:uid('mv'), date:'2024-03-01', type:'Depósito', classId:'deposito', assetId:depId, institution:'Casa',
+    quantity:0, price:0, value:5000, commission:0, currency:'EUR', notes:'Aplicação inicial (demo)'});
+  for(let m=1;m<=8;m++){
+    const d = new Date(2024,2+m,1);
+    if(d>new Date()) break;
+    s.movements.push({ id:uid('mv'), date:fmtLocalISO(d), type:'Juro', classId:'deposito', assetId:depId, institution:'Casa',
+      quantity:0, price:0, value:+(5000*0.032/12).toFixed(2), commission:0, currency:'EUR', notes:'Juro mensal (demo)'});
+  }
+
+  // Outro
+  const outroId = uid('asset');
+  s.assets.push({ id:outroId, classId:'outro', name:'Ouro físico', ticker:'', isin:'', institution:'Cofre pessoal', currency:'EUR',
+    firstDate:'2024-05-10', currentValue:0, notes:'Dados de demonstração', extra:{} });
+  s.movements.push({ id:uid('mv'), date:'2024-05-10', type:'Compra', classId:'outro', assetId:outroId, institution:'Cofre pessoal',
+    quantity:10, price:60, value:600, commission:5, currency:'EUR', notes:'Compra de moedas de ouro (demo)'});
+
+  // define valores atuais plausíveis (currentPrice para ETFs, currentValue para os restantes)
+  s.assets.forEach(a=>{
+    const mv = s.movements.filter(m=>m.assetId===a.id);
+    if(a.classId==='etf'){
+      const bought = mv.filter(m=>m.type==='Compra');
+      const lastPrice = bought.length ? bought[bought.length-1].price : 100;
+      a.currentPrice = +(lastPrice * (1.08 + Math.random()*0.1)).toFixed(2);
+    } else if(a.classId==='outro'){
+      a.currentValue = 680;
+    } else if(a.classId==='ppr'){
+      const invested = mv.filter(m=>CONTRIB_TYPES.includes(m.type)).reduce((s,m)=>s+m.value,0);
+      a.currentValue = +(invested*1.035).toFixed(2);
+    } else if(a.classId==='deposito'){
+      const invested = mv.filter(m=>CONTRIB_TYPES.includes(m.type)).reduce((s,m)=>s+m.value,0);
+      a.currentValue = invested; // capital do Cofre Pessoal mantém-se, juros contam à parte
+    } else if(a.classId==='p2p'){
+      const invested = mv.filter(m=>CONTRIB_TYPES.includes(m.type)).reduce((s,m)=>s+m.value,0);
+      const withdrawn = mv.filter(m=>WITHDRAW_TYPES.includes(m.type)).reduce((s,m)=>s+m.value,0);
+      a.currentValue = +((invested-withdrawn) * (0.98+Math.random()*0.06)).toFixed(2);
+    }
+  });
+
+  s.goals = [
+    {id:uid('goal'), name:'Chegar aos €25.000 de património', type:'patrimonio', target:25000},
+    {id:uid('goal'), name:'Receber €100/mês em juros e dividendos', type:'income_monthly', target:100},
+  ];
+
+  s.benchmarks.SP500 = demoBenchmarkSeries(2024, 0, 14, 8.5);
+  s.benchmarks.MSCIWorld = demoBenchmarkSeries(2024, 0, 14, 6.8);
+
+  return s;
+}
+function demoBenchmarkSeries(year, startMonth, count, annualPct){
+  const arr = [];
+  let val = 100;
+  const monthlyRate = Math.pow(1+annualPct/100, 1/12)-1;
+  for(let i=0;i<count;i++){
+    const d = new Date(year, startMonth+i, 1);
+    if(d>new Date()) break;
+    val = val * (1+monthlyRate) * (1 + (Math.random()-0.5)*0.02);
+    arr.push({ month: monthKey(fmtLocalISO(d)), value: +val.toFixed(2) });
+  }
+  return arr;
+}
+
+/* ---------------------------------------------------------------------
+   4. MOTOR DE CÁLCULO
+   --------------------------------------------------------------------- */
+function classById(id){ return STATE.classes.find(c=>c.id===id); }
+function assetById(id){ return STATE.assets.find(a=>a.id===id); }
+function movementsForAsset(assetId){
+  return STATE.movements.filter(m=>m.assetId===assetId).sort((a,b)=>a.date.localeCompare(b.date));
+}
+
+/* Histórico de valorização de um ativo: registos manuais de "quanto valia este ativo nesta data",
+   INDEPENDENTES de movimentos de dinheiro (não são compras, vendas, reforços ou levantamentos). Servem
+   apenas para reconstruir a evolução real do valor ao longo do tempo, já que a app não obtém cotações
+   automaticamente. */
+function valuationsForAsset(assetId){
+  return STATE.valuations.filter(v=>v.assetId===assetId).sort((a,b)=>a.date.localeCompare(b.date));
+}
+/* Devolve a valorização manual mais recente registada para este ativo, na data indicada ou antes dela
+   (ou null se não existir nenhuma). */
+function valuationAsOf(assetId, date){
+  const list = valuationsForAsset(assetId).filter(v=>v.date<=date);
+  return list.length ? list[list.length-1] : null;
+}
+function upsertValuation(assetId, date, value, notes){
+  const existing = STATE.valuations.find(v=>v.assetId===assetId && v.date===date);
+  if(existing){ existing.value = value; existing.notes = notes||''; return existing; }
+  const v = { id:uid('val'), assetId, date, value, notes: notes||'' };
+  STATE.valuations.push(v);
+  return v;
+}
+
+/* Calcula quantidade e preço médio processando as compras/vendas por ordem cronológica
+   (método de custo médio ponderado). */
+function computeQuantityAndAvgPrice(mvs){
+  let qty = 0, costBasis = 0;
+  mvs.forEach(m=>{
+    if(m.type==='Compra'){
+      qty += num(m.quantity);
+      costBasis += num(m.quantity) * num(m.price);
+    } else if(m.type==='Venda'){
+      const sellQty = num(m.quantity);
+      const avg = qty > 0 ? costBasis/qty : 0;
+      costBasis -= avg * Math.min(sellQty, qty);
+      qty -= sellQty;
+      if(qty < 0.0000001) qty = 0;
+      if(costBasis < 0) costBasis = 0;
+    }
+  });
+  return { quantity: qty, avgPrice: qty>0 ? costBasis/qty : 0, costBasis };
+}
+
+/* Métricas completas de um ativo, com corte opcional por data (asOf) para séries temporais. */
+function computeAssetMetrics(asset, asOfDate, withXirr){
+  const allMvs = movementsForAsset(asset.id);
+  const mvs = asOfDate ? allMvs.filter(m=>m.date<=asOfDate) : allMvs;
+
+  const contributions = mvs.filter(m=>CONTRIB_TYPES.includes(m.type)).reduce((s,m)=>s+num(m.value),0);
+  const withdrawals = mvs.filter(m=>WITHDRAW_TYPES.includes(m.type)).reduce((s,m)=>s+num(m.value),0);
+  const dividends = mvs.filter(m=>m.type==='Dividendo').reduce((s,m)=>s+num(m.value),0);
+  const interest = mvs.filter(m=>m.type==='Juro').reduce((s,m)=>s+num(m.value),0);
+  const bonus = mvs.filter(m=>m.type===BONUS_TYPE).reduce((s,m)=>s+num(m.value),0);
+  const commissions = mvs.reduce((s,m)=>s+num(m.commission),0);
+
+  let quantity=0, avgPrice=0;
+  if(usesQuantityFields(asset.classId)){
+    const qa = computeQuantityAndAvgPrice(mvs);
+    quantity = qa.quantity; avgPrice = qa.avgPrice;
+  }
+
+  const netInvested = Math.max(0, contributions - withdrawals);
+
+  let currentValue;
+  const isLatest = !asOfDate;
+  if(isLatest){
+    if(usesQuantityFields(asset.classId) && quantity>0 && num(asset.currentPrice)>0){
+      currentValue = quantity * num(asset.currentPrice);
+    } else {
+      currentValue = num(asset.currentValue) || netInvested;
+    }
+  } else {
+    // Para séries históricas: usa a valorização real que o utilizador tenha registado para esta data
+    // (Gerir Ativos → detalhe do ativo → Histórico de valorização) sempre que exista; caso contrário,
+    // aproxima ao capital líquido investido até à data (nunca inventamos uma valorização que não podemos
+    // comprovar historicamente).
+    const hv = valuationAsOf(asset.id, asOfDate);
+    currentValue = hv ? num(hv.value) : netInvested;
+  }
+
+  const gainLoss = currentValue - netInvested;
+  const returnPct = netInvested > 0 ? (gainLoss/netInvested)*100 : 0;
+  // "Bónus" entra no rendimento total (é dinheiro/valor recebido) mas NUNCA em "contributions"/netInvested
+  // — não foi o utilizador que colocou esse dinheiro, por isso não pode inflacionar o capital investido.
+  const totalIncome = dividends + interest + bonus;
+  const totalReturn = gainLoss + totalIncome - commissions;
+  const totalReturnPct = netInvested > 0 ? (totalReturn/netInvested)*100 : 0;
+
+  // Fluxos de caixa para XIRR: fluxos negativos nas contribuições, positivos nos levantamentos/rendimentos,
+  // e o valor atual como fluxo final positivo. A construção dos fluxos é barata; o cálculo do XIRR em si
+  // (iterativo) só é executado quando explicitamente pedido (withXirr), para não penalizar cálculos em massa
+  // (ex: séries mensais com dezenas de meses × ativos), que não mostram este valor.
+  const flows = [];
+  mvs.forEach(m=>{
+    if(CONTRIB_TYPES.includes(m.type)) flows.push({date:m.date, amount:-num(m.value)});
+    else if(WITHDRAW_TYPES.includes(m.type) || m.type==='Dividendo' || m.type==='Juro' || m.type===BONUS_TYPE) flows.push({date:m.date, amount:num(m.value)});
+  });
+  if(currentValue > 0) flows.push({date: asOfDate || todayISO(), amount: currentValue});
+  flows.sort((a,b)=>a.date.localeCompare(b.date));
+  const xirr = withXirr ? computeXIRR(flows) : null;
+
+  return {
+    asset, quantity, avgPrice, contributions, withdrawals, dividends, interest, bonus, commissions,
+    netInvested, currentValue, gainLoss, returnPct, totalIncome, totalReturn, totalReturnPct, xirr, flows
+  };
+}
+/* Determina se uma classe de investimento usa o modelo "quantidade × preço" (como um ETF) ou o modelo
+   de "valor atual" inserido manualmente (como P2P, PPR ou Cofre Pessoal). Isto é decidido automaticamente:
+   a classe embutida ETF usa sempre quantidade; P2P, PPR, Cofre Pessoal e Outro usam sempre valor manual (tal
+   como descrito nas suas secções específicas); qualquer NOVA categoria criada pelo utilizador (secção
+   "Gerir Ativos → Nova categoria") herda por omissão o comportamento de quantidade/preço médio do ETF,
+   por ser o mais útil para ações individuais, criptomoedas, ouro em gramas, etc. — sem exigir alterações
+   ao código para o utilizador conseguir isto. */
+function usesQuantityFields(classId){
+  if(classId==='etf') return true;
+  if(classId==='p2p' || classId==='ppr' || classId==='deposito' || classId==='outro') return false;
+  const c = classById(classId);
+  return !!(c && !c.system);
+}
+
+function computeAllAssetMetrics(asOfDate){
+  return STATE.assets.map(a=>computeAssetMetrics(a, asOfDate, false));
+}
+
+function computePortfolioSummary(assetMetricsList){
+  const list = assetMetricsList || computeAllAssetMetrics();
+  const totalCurrent = list.reduce((s,m)=>s+m.currentValue,0);
+  const totalInvested = list.reduce((s,m)=>s+m.netInvested,0);
+  const totalGain = totalCurrent - totalInvested;
+  const totalReturnPct = totalInvested>0 ? (totalGain/totalInvested)*100 : 0;
+  const totalDividends = list.reduce((s,m)=>s+m.dividends,0);
+  const totalInterest = list.reduce((s,m)=>s+m.interest,0);
+  const totalBonus = list.reduce((s,m)=>s+(m.bonus||0),0);
+  const totalIncome = totalDividends+totalInterest+totalBonus;
+  const totalCommissions = list.reduce((s,m)=>s+m.commissions,0);
+  const totalContributions = list.reduce((s,m)=>s+m.contributions,0);
+
+  return { totalCurrent, totalInvested, totalGain, totalReturnPct, totalDividends, totalInterest, totalBonus, totalIncome, totalCommissions, totalContributions };
+}
+
+function computeClassBreakdown(asOfDate){
+  const list = computeAllAssetMetrics(asOfDate);
+  const byClass = {};
+  STATE.classes.forEach(c=> byClass[c.id] = { classId:c.id, name:c.name, color:c.color, invested:0, current:0, gain:0, count:0 });
+  list.forEach(m=>{
+    const cid = m.asset.classId;
+    if(!byClass[cid]) byClass[cid] = { classId:cid, name:cid, color:'#888', invested:0, current:0, gain:0, count:0 };
+    byClass[cid].invested += m.netInvested;
+    byClass[cid].current += m.currentValue;
+    byClass[cid].gain += m.gainLoss;
+    byClass[cid].count += 1;
+  });
+  const total = Object.values(byClass).reduce((s,c)=>s+c.current,0);
+  Object.values(byClass).forEach(c=> c.weight = total>0 ? (c.current/total)*100 : 0);
+  return Object.values(byClass);
+}
+
+function computeInstitutionBreakdown(){
+  const list = computeAllAssetMetrics();
+  const byInst = {};
+  list.forEach(m=>{
+    const inst = m.asset.institution || 'Não especificado';
+    if(!byInst[inst]) byInst[inst] = { name:inst, current:0, invested:0, count:0 };
+    byInst[inst].current += m.currentValue;
+    byInst[inst].invested += m.netInvested;
+    byInst[inst].count += 1;
+  });
+  const total = Object.values(byInst).reduce((s,c)=>s+c.current,0);
+  Object.values(byInst).forEach(c=> c.weight = total>0 ? (c.current/total)*100 : 0);
+  return Object.values(byInst).sort((a,b)=>b.current-a.current);
+}
+
+function computeCurrencyBreakdown(){
+  const list = computeAllAssetMetrics();
+  const byCur = {};
+  list.forEach(m=>{
+    const cur = m.asset.currency || 'EUR';
+    if(!byCur[cur]) byCur[cur] = { name:cur, current:0 };
+    byCur[cur].current += m.currentValue;
+  });
+  const total = Object.values(byCur).reduce((s,c)=>s+c.current,0);
+  Object.values(byCur).forEach(c=> c.weight = total>0 ? (c.current/total)*100 : 0);
+  return Object.values(byCur);
+}
+
+/* Série mensal para gráficos de evolução. Constrói, para cada mês desde o primeiro movimento até ao mais
+   recente entre "hoje" e o último movimento registado (nunca ignora movimentos que tenha lançado, mesmo que
+   tenham data posterior à data do sistema), o capital investido acumulado (exato) e o património total
+   (exato apenas no mês real de hoje; nos restantes usa o capital líquido investido + rendimentos acumulados,
+   já que a app não guarda cotações históricas diárias — ver tooltip "XIRR / Rentabilidade" para detalhe).
+   CORREÇÃO DE AUDITORIA: os campos "dividends"/"interest"/"contributions"/"withdrawals" de cada mês
+   refletem agora APENAS os movimentos desse mês específico (não o total acumulado desde o início) —
+   antes usavam computeAssetMetrics com corte por data, cujo resultado é sempre cumulativo, fazendo o
+   gráfico de "Rendimentos" mensal crescer indefinidamente em vez de mostrar o valor de cada mês. */
+const MAX_MONTHS_SERIES = 1200; // 100 anos — limite de segurança
+function computeMonthlySeries(classFilter){
+  let mvs = STATE.movements.slice().filter(m => ISO_DATE_RE.test(m.date)); // ignora movimentos com data em formato inválido
+  if(classFilter) mvs = mvs.filter(m=>m.classId===classFilter);
+  if(!mvs.length) return [];
+  mvs.sort((a,b)=>a.date.localeCompare(b.date));
+  const firstMonth = monthKey(mvs[0].date);
+  const todayMonth = monthKey(todayISO());
+  const lastMovementMonth = monthKey(mvs[mvs.length-1].date);
+  // A série tem de chegar sempre pelo menos até ao último movimento lançado — mesmo que a sua data seja
+  // posterior à data do sistema (relógio do computador atrasado, ou movimentos lançados com antecedência).
+  const nowMonth = lastMovementMonth > todayMonth ? lastMovementMonth : todayMonth;
+  const months = [];
+  let cursor = firstMonth;
+  let safetyCounter = 0;
+  while(cursor <= nowMonth && safetyCounter < MAX_MONTHS_SERIES){
+    months.push(cursor);
+    const [y,m] = cursor.split('-').map(Number);
+    if(!isFinite(y) || !isFinite(m)) break; // deteta datas corrompidas e para em segurança
+    const nextCursor = nextMonthKey(cursor); // aritmética inteira — nunca passa por Date/fuso horário
+    if(nextCursor <= cursor) break; // nunca deixa o cursor ficar parado ou andar para trás
+    cursor = nextCursor;
+    safetyCounter++;
+  }
+  const assetsInScope = classFilter ? STATE.assets.filter(a=>a.classId===classFilter) : STATE.assets;
+
+  // Agrupa os movimentos (já filtrados por classe, se aplicável) por mês, para calcular rendimentos/fluxos
+  // incrementais de cada mês sem repetir todo o histórico em cada iteração.
+  const mvsByMonth = {};
+  mvs.forEach(m=>{ (mvsByMonth[monthKey(m.date)] = mvsByMonth[monthKey(m.date)] || []).push(m); });
+
+  return months.map((mk, idx)=>{
+    const [asY,asM] = mk.split('-').map(Number);
+    const lastDay = new Date(asY, asM, 0).getDate();
+    const asOf = `${mk}-${String(lastDay).padStart(2,'0')}`;
+    // "isCurrent" corresponde SEMPRE ao mês real de hoje (relógio do sistema) — não ao último mês da série,
+    // que pode ir mais além se houver movimentos com data futura. Só o mês de hoje usa o valor atual "ao
+    // vivo" (quantidade×preço ou valor manual); os restantes usam sempre a aproximação histórica.
+    const isCurrent = mk === todayMonth;
+    let invested=0, current=0, hasRealValuation=false;
+    assetsInScope.forEach(a=>{
+      const met = computeAssetMetrics(a, isCurrent ? null : asOf);
+      invested += met.netInvested;
+      // met.currentValue já reflete, para meses passados, a valorização REAL registada pelo utilizador
+      // (Histórico de valorização) quando exista para essa data, ou o capital investido como aproximação
+      // honesta caso contrário — ver computeAssetMetrics.
+      current += met.currentValue;
+      if(!isCurrent && valuationAsOf(a.id, asOf)) hasRealValuation = true;
+    });
+    const monthMvs = mvsByMonth[mk] || [];
+    const dividends = monthMvs.filter(m=>m.type==='Dividendo').reduce((s,m)=>s+num(m.value),0);
+    const interest = monthMvs.filter(m=>m.type==='Juro').reduce((s,m)=>s+num(m.value),0);
+    const bonus = monthMvs.filter(m=>m.type===BONUS_TYPE).reduce((s,m)=>s+num(m.value),0);
+    const contributions = monthMvs.filter(m=>CONTRIB_TYPES.includes(m.type)).reduce((s,m)=>s+num(m.value),0);
+    const withdrawals = monthMvs.filter(m=>WITHDRAW_TYPES.includes(m.type)).reduce((s,m)=>s+num(m.value),0);
+    return { month: mk, label: fmtMonthLabel(mk), invested, current, dividends, interest, bonus, contributions, withdrawals, hasRealValuation: isCurrent || hasRealValuation };
+  });
+}
+
+/* Reforços mensais reais (contribuições) por mês, para a Análise Mensal e Reforços. */
+function computeMonthlyContributions(year){
+  const map = {};
+  STATE.movements.forEach(m=>{
+    if(!CONTRIB_TYPES.includes(m.type)) return;
+    if(year && !m.date.startsWith(String(year))) return;
+    const mk = monthKey(m.date);
+    map[mk] = (map[mk]||0) + num(m.value);
+  });
+  return map;
+}
+
+function getAvailableYears(){
+  const years = new Set();
+  STATE.movements.forEach(m=> years.add(m.date.slice(0,4)));
+  if(!years.size) years.add(String(new Date().getFullYear()));
+  return Array.from(years).sort();
+}
+
+/* Tabela de Análise Mensal para um ano específico.
+   IMPORTANTE (correção de auditoria): "rentabilidade" aqui NUNCA inclui reforços nem levantamentos —
+   um reforço aumenta o capital investido mas não é lucro, e um levantamento reduz o património sem ser
+   necessariamente uma perda de investimento. Por isso o numerador da rentabilidade usa apenas os
+   RENDIMENTOS reais do mês (juros + dividendos), nunca o dinheiro que entrou ou saiu por decisão do
+   utilizador. Como a aplicação não guarda cotações históricas de mercado, não é possível também isolar
+   aqui a valorização/desvalorização de mercado ocorrida especificamente nesse mês — este indicador reflete
+   por isso apenas o "rendimento gerado" (yield), não a variação de valor de mercado. */
+function computeMonthlyAnalysis(year){
+  const rows = [];
+  for(let month=1; month<=12; month++){
+    const mk = `${year}-${String(month).padStart(2,'0')}`;
+    const mvs = STATE.movements.filter(m=>monthKey(m.date)===mk);
+    const reforços = mvs.filter(m=>CONTRIB_TYPES.includes(m.type)).reduce((s,m)=>s+num(m.value),0);
+    const levantamentos = mvs.filter(m=>WITHDRAW_TYPES.includes(m.type)).reduce((s,m)=>s+num(m.value),0);
+    const juros = mvs.filter(m=>m.type==='Juro').reduce((s,m)=>s+num(m.value),0);
+    const dividendos = mvs.filter(m=>m.type==='Dividendo').reduce((s,m)=>s+num(m.value),0);
+    const bonus = mvs.filter(m=>m.type===BONUS_TYPE).reduce((s,m)=>s+num(m.value),0);
+    const comissoes = mvs.reduce((s,m)=>s+num(m.commission),0);
+    const capitalInicial = rows.length ? rows[rows.length-1].capitalFinal : computeCapitalBefore(mk);
+    const rendimentoMes = juros + dividendos + bonus; // NUNCA inclui reforços/levantamentos — só isto conta como "ganho" real
+    const ganhosPerdas = 0; // sem cotações históricas diárias, não simulamos ganho/perda de mercado intramensal fictício
+    const capitalFinal = capitalInicial + reforços - levantamentos + rendimentoMes;
+    const rentabilidade = capitalInicial>0 ? (rendimentoMes/capitalInicial)*100 : (rendimentoMes>0?100:0);
+    rows.push({ mk, month, capitalInicial, reforços, levantamentos, ganhosPerdas, juros, dividendos, bonus, comissoes, capitalFinal, rentabilidade,
+      hasData: mvs.length>0 });
+  }
+  return rows;
+}
+function computeCapitalBefore(mk){
+  const mvs = STATE.movements.filter(m=>monthKey(m.date) < mk);
+  const contrib = mvs.filter(m=>CONTRIB_TYPES.includes(m.type)).reduce((s,m)=>s+num(m.value),0);
+  const withdr = mvs.filter(m=>WITHDRAW_TYPES.includes(m.type)).reduce((s,m)=>s+num(m.value),0);
+  const inc = mvs.filter(m=>m.type==='Juro'||m.type==='Dividendo'||m.type===BONUS_TYPE).reduce((s,m)=>s+num(m.value),0);
+  return Math.max(0, contrib - withdr + inc);
+}
+
+/* Junta as linhas de computeMonthlyAnalysis de TODOS os anos com movimentos. Inclui sempre qualquer mês
+   com movimentos reais lançados (hasData), mesmo que a sua data seja posterior à data do sistema — para
+   nunca "perder" dados que o utilizador tenha lançado só porque o relógio do computador está atrasado ou
+   porque lançou movimentos com alguma antecedência. Só exclui meses futuros SEM QUALQUER dado (linhas em
+   branco geradas apenas para completar a tabela do ano). Serve de base única e consistente para "melhor
+   mês" / "pior mês" (Performance) e para a "Rentabilidade do mês" (Dashboard), garantindo que ambos usam
+   sempre exatamente a mesma fórmula que a página de Análise Mensal — ver nota em computeMonthlyAnalysis. */
+function computeAllMonthlyRows(){
+  const nowMk = monthKey(todayISO());
+  let rows = [];
+  getAvailableYears().forEach(y=>{
+    computeMonthlyAnalysis(y).forEach(r=>{ if(r.mk <= nowMk || r.hasData) rows.push(r); });
+  });
+  return rows;
+}
+
+/* Rentabilidade do ANO CORRENTE (ou de um ano específico), calculada com a mesma lógica que a Análise
+   Mensal: apenas com base nos RENDIMENTOS (juros + dividendos) recebidos durante o ano, em relação ao
+   capital que já estava investido ANTES do início do ano. Reforços e levantamentos feitos durante o
+   próprio ano ficam deliberadamente de fora do numerador, para nunca serem confundidos com rentabilidade
+   (ver também a nota em computeMonthlyAnalysis sobre a limitação de não existirem cotações históricas). */
+function computeYearReturn(year){
+  const capitalInicialAno = computeCapitalBefore(`${year}-01`);
+  const income = STATE.movements
+    .filter(m=> ISO_DATE_RE.test(m.date) && m.date.startsWith(String(year)) && (m.type==='Juro' || m.type==='Dividendo'))
+    .reduce((s,m)=>s+num(m.value),0);
+  const pct = capitalInicialAno>0 ? (income/capitalInicialAno)*100 : (income>0 ? 100 : 0);
+  return { capitalInicialAno, income, pct };
+}
+
+/* Drawdown sobre a série mensal de património */
+function computeDrawdown(series){
+  let peak = -Infinity, maxDD = 0, maxDDStart=null, maxDDEnd=null, curPeakMonth=null;
+  const dd = series.map(pt=>{
+    if(pt.current > peak){ peak = pt.current; curPeakMonth = pt.month; }
+    const d = peak>0 ? ((pt.current-peak)/peak)*100 : 0;
+    if(d < maxDD){ maxDD = d; maxDDStart = curPeakMonth; maxDDEnd = pt.month; }
+    return { month:pt.month, label:pt.label, drawdown:d };
+  });
+  const current = dd.length ? dd[dd.length-1].drawdown : 0;
+  return { series: dd, maxDrawdown: maxDD, maxDrawdownStart:maxDDStart, maxDrawdownEnd:maxDDEnd, current };
+}
+
+/* Alertas ativos calculados com base nas definições do utilizador */
+function computeActiveAlerts(){
+  const active = [];
+  const cfg = {}; STATE.alerts.forEach(a=> cfg[a.type] = a);
+  const classBreak = computeClassBreakdown();
+  const assetMetrics = computeAllAssetMetrics();
+  const summary = computePortfolioSummary(assetMetrics);
+
+  if(cfg.asset_weight && cfg.asset_weight.active){
+    assetMetrics.forEach(m=>{
+      const w = summary.totalCurrent>0 ? (m.currentValue/summary.totalCurrent)*100 : 0;
+      if(w > num(cfg.asset_weight.threshold)){
+        active.push({level:'warn', text:`${m.asset.name} representa ${fmtPct(w,1).replace('+','')} do património (limite: ${cfg.asset_weight.threshold}%).`});
+      }
+    });
+  }
+  if(cfg.class_weight && cfg.class_weight.active){
+    classBreak.forEach(c=>{
+      if(c.weight > num(cfg.class_weight.threshold)){
+        active.push({level:'warn', text:`A classe ${c.name} representa ${fmtPct(c.weight,1).replace('+','')} do património (limite: ${cfg.class_weight.threshold}%).`});
+      }
+    });
+  }
+  if(cfg.negative_return && cfg.negative_return.active){
+    assetMetrics.forEach(m=>{
+      if(m.netInvested>0 && m.returnPct < num(cfg.negative_return.threshold)){
+        active.push({level:'crit', text:`${m.asset.name} está com rentabilidade negativa (${fmtPct(m.returnPct,1)}).`});
+      }
+    });
+  }
+  if(cfg.drawdown && cfg.drawdown.active){
+    const dd = computeDrawdown(computeMonthlySeries());
+    if(Math.abs(dd.current) > num(cfg.drawdown.threshold)){
+      active.push({level:'crit', text:`Drawdown atual de ${fmtPct(dd.current,1)}, acima do limite de ${cfg.drawdown.threshold}%.`});
+    }
+  }
+  if(cfg.deposit_maturity && cfg.deposit_maturity.active){
+    STATE.assets.filter(a=>a.classId==='deposito' && a.extra && a.extra.dataVencimento).forEach(a=>{
+      const days = daysBetween(todayISO(), a.extra.dataVencimento);
+      if(days >= 0 && days <= num(cfg.deposit_maturity.threshold)){
+        active.push({level:'warn', text:`O ativo do Cofre Pessoal "${a.name}" vence dentro de ${Math.round(days)} dias (${fmtDate(a.extra.dataVencimento)}).`});
+      }
+    });
+  }
+  STATE.assets.filter(a=>a.classId==='p2p' && a.extra && a.extra.atraso).forEach(a=>{
+    active.push({level:'crit', text:`A plataforma P2P "${a.name}" tem capital em atraso / default assinalado.`});
+  });
+  return active;
+}
+
+/* ---------------------------------------------------------------------
+   5. ESTADO DE INTERFACE (navegação, filtros globais, gráficos ativos)
+   --------------------------------------------------------------------- */
+const NAV_ITEMS = [
+  {id:'dashboard', label:'Dashboard', icon:'grid'},
+  {id:'investimentos', label:'Investimentos', icon:'layers'},
+  {id:'etfs', label:'ETFs', icon:'bar'},
+  {id:'p2p', label:'P2P', icon:'handshake'},
+  {id:'ppr', label:'PPR', icon:'shield'},
+  {id:'depositos', label:'Cofre Pessoal', icon:'bank'},
+  {id:'movimentos', label:'Movimentos', icon:'list'},
+  {id:'analise-mensal', label:'Análise Mensal', icon:'calendar'},
+  {id:'performance', label:'Performance', icon:'trend'},
+  {id:'rendimentos', label:'Rendimentos', icon:'coin'},
+  {id:'diversificacao', label:'Diversificação', icon:'pie'},
+  {id:'objetivos', label:'Objetivos', icon:'target'},
+  {id:'gerir-ativos', label:'Gerir Ativos', icon:'wrench'},
+  {id:'definicoes', label:'Definições', icon:'gear'},
+];
+const ICONS = {
+  grid:'<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>',
+  layers:'<path d="M12 2 3 7l9 5 9-5-9-5Z"/><path d="M3 12l9 5 9-5"/><path d="M3 17l9 5 9-5"/>',
+  bar:'<path d="M4 20V10M12 20V4M20 20v-7"/>',
+  handshake:'<path d="M8 12l3 3 6-6"/><circle cx="12" cy="12" r="9.5"/>',
+  shield:'<path d="M12 2 4 5v6c0 5 3.5 8.5 8 11 4.5-2.5 8-6 8-11V5l-8-3Z"/>',
+  bank:'<path d="M3 21h18M4 21V10M20 21V10M2 10l10-6 10 6M8 21v-6M12 21v-6M16 21v-6"/>',
+  list:'<path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/>',
+  calendar:'<rect x="3" y="4.5" width="18" height="16" rx="2"/><path d="M16 2.5v4M8 2.5v4M3 9.5h18"/>',
+  trend:'<path d="M3 17l6-6 4 4 8-8M14 7h7v7"/>',
+  coin:'<circle cx="12" cy="12" r="9.5"/><path d="M12 7v10M9 9.5c0-1.4 1.3-2.5 3-2.5s3 .9 3 2.2c0 3-6 1.6-6 4.6 0 1.3 1.3 2.2 3 2.2s3-1.1 3-2.5"/>',
+  pie:'<path d="M12 2v10l8.5 5A10 10 0 1 0 12 2Z"/><path d="M12 2a10 10 0 0 1 8.5 15"/>',
+  target:'<circle cx="12" cy="12" r="9.5"/><circle cx="12" cy="12" r="5.5"/><circle cx="12" cy="12" r="1.5"/>',
+  wrench:'<path d="M14.7 6.3a4 4 0 1 1-5.4 5.4L4 17l3 3 5.3-5.3a4 4 0 0 1 5.4-5.4l-3 3-2-2 3-3Z"/>',
+  gear:'<circle cx="12" cy="12" r="3.2"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.9.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.9-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.9V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1Z"/>',
+  x:'<path d="M18 6 6 18M6 6l12 12"/>', plus:'<path d="M12 5v14M5 12h14"/>', edit:'<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/>',
+  trash:'<path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6h14Z"/>',
+  sun:'<circle cx="12" cy="12" r="4.5"/><path d="M12 2v2.5M12 19.5V22M4.2 4.2l1.8 1.8M18 18l1.8 1.8M2 12h2.5M19.5 12H22M4.2 19.8 6 18M18 6l1.8-1.8"/>',
+  moon:'<path d="M20 14.5A8.5 8.5 0 1 1 9.5 4a7 7 0 0 0 10.5 10.5Z"/>',
+  download:'<path d="M12 3v13m0 0-4.5-4.5M12 16l4.5-4.5M4 20h16"/>', upload:'<path d="M12 21V8m0 0 4.5 4.5M12 8 7.5 12.5M4 4h16"/>',
+  menu:'<path d="M4 7h16M4 12h16M4 17h16"/>', check:'<path d="M20 6 9 17l-5-5"/>',
+};
+function icon(name, size){ return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" width="${size||18}" height="${size||18}">${ICONS[name]||''}</svg>`; }
+
+let CURRENT_PAGE = 'dashboard';
+let FILTERS = { period:'all', classId:'', assetId:'', institution:'', currency:'' };
+let ANALYSIS_YEAR = String(new Date().getFullYear());
+let CHART_REGISTRY = {};
+function destroyChart(key){ if(CHART_REGISTRY[key]){ CHART_REGISTRY[key].destroy(); delete CHART_REGISTRY[key]; } }
+function cssVar(name){ return getComputedStyle(document.documentElement).getPropertyValue(name).trim(); }
+function chartColors(){
+  return {
+    ink: cssVar('--ink'), inkSoft: cssVar('--ink-soft'), inkFaint: cssVar('--ink-faint'),
+    border: cssVar('--border'), accent: cssVar('--accent'), positive: cssVar('--positive'),
+    negative: cssVar('--negative'), grid: cssVar('--border'),
+    palette: ['#0E6E5C','#1E4FA0','#6C2FA6','#9A5B10','#B5432F','#5B6472','#2FB495','#E0B655'],
+  };
+}
+if(typeof Chart !== 'undefined'){
+  Chart.defaults.font.family = "system-ui,-apple-system,'Segoe UI',Roboto,sans-serif";
+  Chart.defaults.font.size = 11.5;
+}
+
+/* Chart.js é carregado com "defer" (não bloqueia a abertura da aplicação). Enquanto a biblioteca não
+   estiver disponível, cada gráfico mostra um aviso em vez de bloquear ou rebentar a app; assim que
+   carrega, window.__chartLoaded() (chamado pelo atributo onload da tag <script>) marca-a como pronta
+   e volta a desenhar a página atual para os gráficos aparecerem — tudo o resto (cartões, tabelas,
+   valores, navegação) já está visível muito antes disso. */
+let CHART_READY = (typeof Chart !== 'undefined');
+function safeMakeChart(ctxEl, config){
+  if(!ctxEl) return null;
+  if(typeof Chart === 'undefined'){
+    if(ctxEl.parentElement) ctxEl.parentElement.innerHTML = emptyChartHTML('A carregar biblioteca de gráficos…');
+    return null;
+  }
+  return new Chart(ctxEl, config);
+}
+window.__chartLoaded = function(){
+  if(CHART_READY) return;
+  CHART_READY = true;
+  Chart.defaults.font.family = "system-ui,-apple-system,'Segoe UI',Roboto,sans-serif";
+  Chart.defaults.font.size = 11.5;
+  if(document.readyState !== 'loading' && typeof CURRENT_PAGE !== 'undefined' && document.getElementById('pageRoot')){
+    navigate(CURRENT_PAGE); // reconstrói a página atual para os gráficos aparecerem
+  }
+};
+
+/* Aplica o período do filtro global a uma lista de datas ISO, devolvendo [from,to] ou null */
+function periodRange(){
+  const today = new Date();
+  const to = todayISO();
+  let from = null;
+  switch(FILTERS.period){
+    case 'month': from = new Date(today.getFullYear(), today.getMonth(), 1); break;
+    case '3m': from = new Date(today.getFullYear(), today.getMonth()-2, 1); break;
+    case '6m': from = new Date(today.getFullYear(), today.getMonth()-5, 1); break;
+    case 'year': from = new Date(today.getFullYear(), 0, 1); break;
+    case '12m': from = new Date(today.getFullYear(), today.getMonth()-11, 1); break;
+    default: from = null;
+  }
+  return { from: from ? fmtLocalISO(from) : null, to };
+}
+function filteredMovements(){
+  const {from,to} = periodRange();
+  return STATE.movements.filter(m=>{
+    if(from && m.date < from) return false;
+    if(to && m.date > to) return false;
+    if(FILTERS.classId && m.classId !== FILTERS.classId) return false;
+    if(FILTERS.assetId && m.assetId !== FILTERS.assetId) return false;
+    if(FILTERS.institution && m.institution !== FILTERS.institution) return false;
+    if(FILTERS.currency && m.currency !== FILTERS.currency) return false;
+    return true;
+  });
+}
+function filteredAssets(){
+  return STATE.assets.filter(a=>{
+    if(FILTERS.classId && a.classId !== FILTERS.classId) return false;
+    if(FILTERS.assetId && a.id !== FILTERS.assetId) return false;
+    if(FILTERS.institution && a.institution !== FILTERS.institution) return false;
+    if(FILTERS.currency && a.currency !== FILTERS.currency) return false;
+    return true;
+  });
+}
+
+/* ---------------------------------------------------------------------
+   6. SHELL DA APLICAÇÃO (sidebar, topbar, router)
+   --------------------------------------------------------------------- */
+const PAGE_TITLES = {
+  dashboard:['Dashboard','Visão geral do seu património'],
+  investimentos:['Investimentos','Todos os ativos num único local'],
+  etfs:['ETFs','Gestão de investimentos em ETFs'],
+  p2p:['P2P','Gestão de investimentos em plataformas P2P'],
+  ppr:['PPR','Planos Poupança-Reforma'],
+  depositos:['Cofre Pessoal','Reservas e poupanças guardadas fora de investimentos tradicionais'],
+  movimentos:['Movimentos','Registo de todas as transações'],
+  'analise-mensal':['Análise Mensal','Evolução mês a mês'],
+  performance:['Performance','Indicadores de desempenho do portfólio'],
+  rendimentos:['Rendimentos','Dividendos e juros recebidos'],
+  diversificacao:['Diversificação','Distribuição do património'],
+  objetivos:['Objetivos','Metas financeiras e progresso'],
+  'gerir-ativos':['Gerir Ativos','Adicionar, editar e eliminar ativos'],
+  definicoes:['Definições','Preferências da aplicação'],
+};
+
+function renderShell(){
+  const app = document.getElementById('app');
+  app.innerHTML = `
+    <aside class="sidebar" id="sidebar">
+      <div class="sidebar-brand">
+        <div class="mark">€</div>
+        <div>
+          <div class="name">${escapeHtml(STATE.settings.portfolioName)}</div>
+          <div class="sub">Gestão de património</div>
+        </div>
+      </div>
+      <nav class="sidebar-nav" id="sidebarNav"></nav>
+      <div class="sidebar-footer">${icon('check',11)} Dados guardados apenas neste dispositivo.</div>
+    </aside>
+    <div class="main">
+      <div class="topbar">
+        <button class="menu-toggle btn-icon" id="menuToggle">${icon('menu',20)}</button>
+        <div>
+          <div class="topbar-title" id="topbarTitle"></div>
+          <div class="topbar-sub" id="topbarSub"></div>
+        </div>
+        <div class="topbar-spacer"></div>
+        <button class="btn btn-icon" id="themeToggle" title="Alternar tema"></button>
+        <button class="btn btn-primary" id="quickAddMovement">${icon('plus',16)} Novo movimento</button>
+      </div>
+      <div class="content" id="content"></div>
+    </div>`;
+  renderSidebarNav();
+  document.getElementById('menuToggle').onclick = ()=>{
+    document.getElementById('sidebar').classList.toggle('open');
+    document.getElementById('sidebarScrim').classList.toggle('open');
+  };
+  document.getElementById('sidebarScrim').onclick = ()=>{
+    document.getElementById('sidebar').classList.remove('open');
+    document.getElementById('sidebarScrim').classList.remove('open');
+  };
+  document.getElementById('themeToggle').onclick = toggleTheme;
+  document.getElementById('quickAddMovement').onclick = ()=>openMovementModal();
+  updateThemeIcon();
+}
+function renderSidebarNav(){
+  const nav = document.getElementById('sidebarNav');
+  nav.innerHTML = NAV_ITEMS.map(item=>`
+    <button class="nav-item ${item.id===CURRENT_PAGE?'active':''}" data-page="${item.id}">
+      ${icon(item.icon,17)}<span>${item.label}</span>
+    </button>`).join('');
+  nav.querySelectorAll('.nav-item').forEach(btn=>{
+    btn.onclick = ()=>{ navigate(btn.dataset.page); document.getElementById('sidebar').classList.remove('open'); document.getElementById('sidebarScrim').classList.remove('open'); };
+  });
+}
+function navigate(page){
+  CURRENT_PAGE = page;
+  location.hash = page;
+  renderSidebarNav();
+  const [title,sub] = PAGE_TITLES[page] || ['',''];
+  document.getElementById('topbarTitle').textContent = title;
+  document.getElementById('topbarSub').textContent = sub;
+  const content = document.getElementById('content');
+  content.innerHTML = '<div id="pageRoot"></div>';
+  const root = document.getElementById('pageRoot');
+  try{
+    PAGE_RENDERERS[page] ? PAGE_RENDERERS[page](root) : root.innerHTML = '<div class="empty-state">Página não encontrada.</div>';
+  }catch(err){
+    console.error('Erro ao carregar a página "'+page+'":', err);
+    root.innerHTML = `<div class="card"><div class="empty-state">
+      <div class="icon">⚠️</div>
+      <h4>Ocorreu um problema ao carregar esta página</h4>
+      <p>Pode tentar novamente ou consultar a consola do browser (F12) para mais detalhe.<br><span class="num" style="font-size:11px;">${escapeHtml(err.message)}</span></p>
+      </div></div>`;
+  }
+  window.scrollTo(0,0);
+}
+function toggleTheme(){
+  STATE.settings.theme = STATE.settings.theme === 'dark' ? 'light' : 'dark';
+  applyTheme(); saveState(); updateThemeIcon();
+  navigate(CURRENT_PAGE); // refaz gráficos com as novas cores
+}
+function applyTheme(){
+  document.documentElement.setAttribute('data-theme', STATE.settings.theme === 'dark' ? 'dark' : 'light');
+}
+function updateThemeIcon(){
+  const btn = document.getElementById('themeToggle');
+  if(btn) btn.innerHTML = icon(STATE.settings.theme==='dark' ? 'sun':'moon', 17);
+}
+
+/* Barra de filtros globais reutilizável em várias páginas */
+function renderFilterBar(container, opts){
+  opts = opts || {};
+  const institutions = Array.from(new Set(STATE.assets.map(a=>a.institution).filter(Boolean))).sort();
+  const bar = document.createElement('div');
+  bar.className = 'tag-filter-bar';
+  bar.innerHTML = `
+    <select id="fPeriod">
+      <option value="all">Desde o início</option>
+      <option value="month">Este mês</option>
+      <option value="3m">Últimos 3 meses</option>
+      <option value="6m">Últimos 6 meses</option>
+      <option value="year">Este ano</option>
+      <option value="12m">Últimos 12 meses</option>
+    </select>
+    <select id="fClass"><option value="">Todas as classes</option>${STATE.classes.map(c=>`<option value="${c.id}">${escapeHtml(c.name)}</option>`).join('')}</select>
+    <select id="fAsset"><option value="">Todos os ativos</option>${STATE.assets.map(a=>`<option value="${a.id}">${escapeHtml(a.name)}</option>`).join('')}</select>
+    <select id="fInst"><option value="">Todas as instituições</option>${institutions.map(i=>`<option value="${escapeHtml(i)}">${escapeHtml(i)}</option>`).join('')}</select>
+    <select id="fCur"><option value="">Todas as moedas</option>${Object.keys(CURRENCY_SYMBOLS).map(c=>`<option value="${c}">${c}</option>`).join('')}</select>
+    <button class="btn btn-sm btn-ghost" id="fClear">Limpar filtros</button>
+  `;
+  container.appendChild(bar);
+  bar.querySelector('#fPeriod').value = FILTERS.period;
+  bar.querySelector('#fClass').value = FILTERS.classId;
+  bar.querySelector('#fAsset').value = FILTERS.assetId;
+  bar.querySelector('#fInst').value = FILTERS.institution;
+  bar.querySelector('#fCur').value = FILTERS.currency;
+  bar.querySelector('#fPeriod').onchange = e=>{ FILTERS.period=e.target.value; opts.onChange && opts.onChange(); };
+  bar.querySelector('#fClass').onchange = e=>{ FILTERS.classId=e.target.value; opts.onChange && opts.onChange(); };
+  bar.querySelector('#fAsset').onchange = e=>{ FILTERS.assetId=e.target.value; opts.onChange && opts.onChange(); };
+  bar.querySelector('#fInst').onchange = e=>{ FILTERS.institution=e.target.value; opts.onChange && opts.onChange(); };
+  bar.querySelector('#fCur').onchange = e=>{ FILTERS.currency=e.target.value; opts.onChange && opts.onChange(); };
+  bar.querySelector('#fClear').onclick = ()=>{ FILTERS = {period:'all',classId:'',assetId:'',institution:'',currency:''}; opts.onChange && opts.onChange(); };
+}
+
+/* ---------------------------------------------------------------------
+   7. SISTEMA DE MODAIS
+   --------------------------------------------------------------------- */
+function openModal(html, opts){
+  opts = opts || {};
+  const overlay = document.getElementById('modalOverlay');
+  const box = document.getElementById('modalBox');
+  box.className = 'modal' + (opts.wide ? ' wide' : '');
+  box.innerHTML = html;
+  overlay.classList.add('open');
+  overlay.onclick = (e)=>{ if(e.target===overlay && !opts.persistent) closeModal(); };
+  const closeBtn = box.querySelector('.modal-close');
+  if(closeBtn) closeBtn.onclick = closeModal;
+  document.addEventListener('keydown', escCloseHandler);
+}
+function escCloseHandler(e){ if(e.key==='Escape') closeModal(); }
+function closeModal(){
+  document.getElementById('modalOverlay').classList.remove('open');
+  document.removeEventListener('keydown', escCloseHandler);
+}
+function confirmDialog(title, message, onConfirm, danger){
+  openModal(`
+    <div class="modal-header"><h3>${escapeHtml(title)}</h3><button class="modal-close">${icon('x',18)}</button></div>
+    <div class="modal-body"><p style="margin:0;font-size:13.5px;color:var(--ink-soft);line-height:1.6;">${message}</p></div>
+    <div class="modal-footer">
+      <button class="btn" id="cdCancel">Cancelar</button>
+      <button class="btn ${danger?'btn-danger':'btn-primary'}" id="cdOk">Confirmar</button>
+    </div>`);
+  document.getElementById('cdCancel').onclick = closeModal;
+  document.getElementById('cdOk').onclick = ()=>{ closeModal(); onConfirm(); };
+}
+
+/* ---------------------------------------------------------------------
+   8. PÁGINA: DASHBOARD
+   --------------------------------------------------------------------- */
+function renderDashboard(root){
+  const assetMetrics = computeAllAssetMetrics();
+  const summary = computePortfolioSummary(assetMetrics);
+  const nowYear = new Date().getFullYear();
+  const nowMk = monthKey(todayISO());
+  // CORREÇÃO DE AUDITORIA: a rentabilidade do mês/ano usa a mesma fórmula da Análise Mensal (só rendimentos
+  // — juros e dividendos — sobre o capital já investido antes do período). Reforços e levantamentos feitos
+  // neste mês/ano NUNCA entram neste cálculo, para nunca serem confundidos com ganho ou perda de investimento.
+  const monthRow = computeMonthlyAnalysis(nowYear).find(r=>r.mk===nowMk);
+  const monthReturnPct = monthRow ? monthRow.rentabilidade : 0;
+  const yearReturn = computeYearReturn(nowYear);
+  const yearReturnPct = yearReturn.pct;
+  const alerts = computeActiveAlerts();
+  const periodReturnTip = 'Reflete apenas os rendimentos (juros e dividendos) recebidos neste período, em relação ao capital que já tinha investido antes dele. Reforços e levantamentos feitos neste período NUNCA contam como ganho ou perda aqui. Como a app não guarda cotações históricas de mercado, este valor não inclui eventual valorização ou desvalorização de mercado ocorrida especificamente neste período — só o rendimento efetivamente recebido.';
+
+  root.innerHTML = `
+    ${STATE.isDemo ? `<div class="demo-banner">${icon('check',14)} DADOS DE DEMONSTRAÇÃO — vá a Definições para carregar os seus dados reais ou limpar tudo.</div>` : ''}
+    <div class="grid grid-stats" style="margin-bottom:14px;">
+      <div class="card stat-card">
+        <div class="stat-label">Património total</div>
+        <div class="stat-value">${fmtMoney(summary.totalCurrent)}</div>
+        <div class="stat-sub ${summary.totalGain>=0?'pos':'neg'}">${fmtMoney(summary.totalGain)} (${fmtPct(summary.totalReturnPct)})</div>
+      </div>
+      <div class="card stat-card">
+        <div class="stat-label">Capital investido</div>
+        <div class="stat-value">${fmtMoney(summary.totalInvested)}</div>
+        <div class="stat-sub neu">${fmtMoney(summary.totalContributions)} aportados no total</div>
+      </div>
+      <div class="card stat-card">
+        <div class="stat-label">Valor atual</div>
+        <div class="stat-value">${fmtMoney(summary.totalCurrent)}</div>
+        <div class="stat-sub neu">${assetMetrics.length} ativo(s) sob gestão</div>
+      </div>
+      <div class="card stat-card">
+        <div class="stat-label">Ganho / Perda</div>
+        <div class="stat-value ${summary.totalGain>=0?'pos':'neg'}">${fmtMoney(summary.totalGain)}</div>
+        <div class="stat-sub ${summary.totalGain>=0?'pos':'neg'}">${fmtPct(summary.totalReturnPct)} rentabilidade</div>
+      </div>
+    </div>
+    <div class="grid grid-stats" style="margin-bottom:22px;">
+      <div class="card stat-card">
+        <div class="stat-label">Dividendos recebidos</div>
+        <div class="stat-value">${fmtMoney(summary.totalDividends)}</div>
+      </div>
+      <div class="card stat-card">
+        <div class="stat-label">Juros recebidos</div>
+        <div class="stat-value">${fmtMoney(summary.totalInterest)}</div>
+      </div>
+      <div class="card stat-card">
+        <div class="stat-label">Bónus recebidos <span class="tooltip-i" data-tip="Bónus dados pela plataforma/ativo (ex: referência, boas-vindas) — não é dinheiro seu, por isso não conta como reforço/capital investido, apenas como rendimento.">i</span></div>
+        <div class="stat-value">${fmtMoney(summary.totalBonus)}</div>
+      </div>
+      <div class="card stat-card">
+        <div class="stat-label">Rendimentos totais</div>
+        <div class="stat-value">${fmtMoney(summary.totalIncome)}</div>
+      </div>
+      <div class="card stat-card">
+        <div class="stat-label">Reforços realizados</div>
+        <div class="stat-value">${fmtMoney(summary.totalContributions)}</div>
+      </div>
+      <div class="card stat-card">
+        <div class="stat-label">Rentabilidade do mês <span class="tooltip-i" data-tip="${periodReturnTip}">i</span></div>
+        <div class="stat-value ${monthReturnPct>=0?'pos':'neg'}">${fmtPct(monthReturnPct)}</div>
+      </div>
+      <div class="card stat-card">
+        <div class="stat-label">Rentabilidade do ano <span class="tooltip-i" data-tip="${periodReturnTip}">i</span></div>
+        <div class="stat-value ${yearReturnPct>=0?'pos':'neg'}">${fmtPct(yearReturnPct)}</div>
+      </div>
+    </div>
+
+    <div class="grid grid-2" style="margin-bottom:14px;">
+      <div class="card">
+        <div class="card-header-row"><h2>Evolução do património <span class="tooltip-i" data-tip="Sempre que tiver registado um Histórico de valorização para um ativo (no detalhe desse ativo), os meses correspondentes mostram o valor real nessa data. Nos restantes meses, mostra o capital líquido investido como aproximação, já que a app não obtém cotações automaticamente.">i</span></h2>
+          <div style="display:flex;gap:6px;">
+            <select id="evoRange" class="btn-sm" style="padding:5px 8px;border-radius:6px;">
+              <option value="3">3 meses</option><option value="6">6 meses</option><option value="12" selected>1 ano</option><option value="all">Desde o início</option>
+              <optgroup label="Ano específico">${getAvailableYears().slice().reverse().map(y=>`<option value="y:${y}">${y}</option>`).join('')}</optgroup>
+            </select>
+          </div>
+        </div>
+        <div class="chart-box tall"><canvas id="chartEvolution"></canvas></div>
+      </div>
+      <div class="card">
+        <div class="card-header-row"><h2>Distribuição por classe</h2></div>
+        <div class="chart-box tall"><canvas id="chartClassPie"></canvas></div>
+      </div>
+    </div>
+
+    <div class="grid grid-2" style="margin-bottom:14px;">
+      <div class="card">
+        <div class="card-header-row"><h2>Capital investido vs valor atual</h2></div>
+        <div class="chart-box"><canvas id="chartInvestedVsCurrent"></canvas></div>
+      </div>
+      <div class="card">
+        <div class="card-header-row"><h2>Distribuição por ativo (top 8)</h2></div>
+        <div class="chart-box"><canvas id="chartAssetBar"></canvas></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header-row"><h2>Alertas ativos</h2><span class="muted" style="font-size:12px;">${alerts.length} alerta(s)</span></div>
+      <div id="alertsList">
+        ${alerts.length ? alerts.map(a=>`<div class="alert-item ${a.level}">${icon(a.level==='crit'?'x':'check',15)} ${a.text}</div>`).join('') :
+          `<div class="empty-state" style="padding:20px;"><div class="icon">✓</div><h4>Tudo dentro dos limites definidos</h4><p>Configure os seus alertas em Definições.</p></div>`}
+      </div>
+    </div>
+  `;
+
+  document.getElementById('evoRange').onchange = (e)=> drawEvolutionChart(e.target.value);
+  drawEvolutionChart('12');
+  drawClassPieChart('chartClassPie');
+  drawInvestedVsCurrentChart(assetMetrics);
+  drawAssetBarChart(assetMetrics);
+}
+
+function drawEvolutionChart(range){
+  destroyChart('evolution');
+  let series = computeMonthlySeries();
+  if(range && range.startsWith('y:')){
+    const year = range.slice(2);
+    series = series.filter(s=>s.month.startsWith(year));
+  } else if(range !== 'all'){
+    series = series.slice(-parseInt(range));
+  }
+  const c = chartColors();
+  const ctx = document.getElementById('chartEvolution');
+  if(!ctx) return;
+  if(!series.length){ ctx.parentElement.innerHTML = emptyChartHTML('Sem movimentos suficientes para traçar a evolução.'); return; }
+  CHART_REGISTRY['evolution'] = safeMakeChart(ctx, {
+    type:'line',
+    data:{ labels: series.map(s=>s.label), datasets:[
+      { label:'Património total', data:series.map(s=>s.current), borderColor:c.accent, backgroundColor:c.accent+'22', fill:true, tension:.3, pointRadius:2 },
+      { label:'Capital investido', data:series.map(s=>s.invested), borderColor:c.inkFaint, borderDash:[5,4], fill:false, tension:.3, pointRadius:0 },
+    ]},
+    options: baseChartOptions(c, {currency:true})
+  });
+}
+function drawClassPieChart(canvasId, asOf){
+  destroyChart('classPie'+(canvasId||''));
+  const c = chartColors();
+  const breakdown = computeClassBreakdown(asOf).filter(x=>x.current>0.004);
+  const ctx = document.getElementById(canvasId);
+  if(!ctx) return;
+  if(!breakdown.length){ ctx.parentElement.innerHTML = emptyChartHTML('Ainda sem ativos com valor.'); return; }
+  CHART_REGISTRY['classPie'+(canvasId||'')] = safeMakeChart(ctx, {
+    type:'doughnut',
+    data:{ labels: breakdown.map(b=>b.name), datasets:[{ data: breakdown.map(b=>b.current), backgroundColor: breakdown.map((b,i)=>c.palette[i%c.palette.length]), borderWidth:2, borderColor: cssVar('--bg-elevated') }]},
+    options:{ responsive:true, maintainAspectRatio:false, plugins:{ legend:{position:'bottom', labels:{color:c.inkSoft, boxWidth:10, padding:12}},
+      tooltip:{ callbacks:{ label: (ctx)=> ` ${ctx.label}: ${fmtMoney(ctx.parsed)} (${((ctx.parsed/breakdown.reduce((s,b)=>s+b.current,0))*100).toFixed(1)}%)` } } } }
+  });
+}
+function drawInvestedVsCurrentChart(assetMetrics){
+  destroyChart('investedVsCurrent');
+  const c = chartColors();
+  const breakdown = computeClassBreakdown();
+  const ctx = document.getElementById('chartInvestedVsCurrent');
+  if(!ctx) return;
+  if(!breakdown.some(b=>b.current>0||b.invested>0)){ ctx.parentElement.innerHTML = emptyChartHTML('Sem dados.'); return; }
+  CHART_REGISTRY['investedVsCurrent'] = safeMakeChart(ctx, {
+    type:'bar',
+    data:{ labels: breakdown.map(b=>b.name), datasets:[
+      { label:'Capital investido', data: breakdown.map(b=>b.invested), backgroundColor:c.inkFaint+'aa', borderRadius:5 },
+      { label:'Valor atual', data: breakdown.map(b=>b.current), backgroundColor:c.accent, borderRadius:5 },
+    ]},
+    options: baseChartOptions(c, {currency:true})
+  });
+}
+function drawAssetBarChart(assetMetrics){
+  destroyChart('assetBar');
+  const c = chartColors();
+  const top = assetMetrics.slice().sort((a,b)=>b.currentValue-a.currentValue).slice(0,8);
+  const ctx = document.getElementById('chartAssetBar');
+  if(!ctx) return;
+  if(!top.length || !top.some(t=>t.currentValue>0)){ ctx.parentElement.innerHTML = emptyChartHTML('Sem dados.'); return; }
+  CHART_REGISTRY['assetBar'] = safeMakeChart(ctx, {
+    type:'bar',
+    data:{ labels: top.map(t=>t.asset.name), datasets:[{ label:'Valor atual', data: top.map(t=>t.currentValue), backgroundColor:c.palette, borderRadius:5 }]},
+    options: Object.assign(baseChartOptions(c, {currency:true}), { indexAxis:'y', plugins:{legend:{display:false}} })
+  });
+}
+function emptyChartHTML(msg){ return `<div class="empty-state" style="padding:30px;"><div class="icon">📊</div><p>${msg}</p></div>`; }
+function baseChartOptions(c, opts){
+  opts = opts || {};
+  return {
+    responsive:true, maintainAspectRatio:false,
+    interaction:{ mode:'index', intersect:false },
+    scales:{
+      x:{ grid:{ color:c.grid, display:false }, ticks:{ color:c.inkFaint } },
+      y:{ grid:{ color:c.grid }, ticks:{ color:c.inkFaint, callback:(v)=> opts.currency ? fmtCompact(v) : v } }
+    },
+    plugins:{
+      legend:{ position:'bottom', labels:{ color:c.inkSoft, boxWidth:10, padding:12 } },
+      tooltip:{ callbacks:{ label:(ctx)=> ` ${ctx.dataset.label}: ${opts.currency ? fmtMoney(ctx.parsed.y!==undefined?ctx.parsed.y:ctx.parsed.x) : ctx.formattedValue}` } }
+    }
+  };
+}
+function fmtCompact(v){
+  if(Math.abs(v)>=1000) return (v/1000).toFixed(v%1000===0?0:1)+'k€';
+  return v+'€';
+}
+
+/* ---------------------------------------------------------------------
+   9. PÁGINAS DE CLASSE (ETFs / P2P / PPR / Cofre Pessoal / Investimentos)
+   --------------------------------------------------------------------- */
+function badgeForClass(classId){
+  const c = classById(classId);
+  const knownKey = ['etf','p2p','ppr','deposito'].includes(classId) ? classId : 'outro';
+  return `<span class="badge badge-${knownKey}">${escapeHtml(c ? c.name : classId)}</span>`;
+}
+
+function renderClassPage(root, classId){
+  const cls = classById(classId);
+  const metrics = computeAllAssetMetrics().filter(m=>m.asset.classId===classId);
+  const summary = computePortfolioSummary(metrics);
+
+  const wrap = document.createElement('div');
+  root.appendChild(wrap);
+  wrap.innerHTML = `
+    <div class="grid grid-stats" style="margin-bottom:18px;">
+      <div class="card stat-card"><div class="stat-label">Capital investido</div><div class="stat-value">${fmtMoney(summary.totalInvested)}</div></div>
+      <div class="card stat-card"><div class="stat-label">Valor atual</div><div class="stat-value">${fmtMoney(summary.totalCurrent)}</div></div>
+      <div class="card stat-card"><div class="stat-label">Ganho/Perda</div><div class="stat-value ${summary.totalGain>=0?'pos':'neg'}">${fmtMoney(summary.totalGain)}</div><div class="stat-sub ${summary.totalGain>=0?'pos':'neg'}">${fmtPct(summary.totalReturnPct)}</div></div>
+      <div class="card stat-card"><div class="stat-label">Rendimentos (${classId==='p2p'||classId==='deposito'?'juros':'dividendos+juros'})</div><div class="stat-value">${fmtMoney(summary.totalIncome)}</div></div>
+    </div>
+    <div class="card">
+      <div class="card-header-row">
+        <h2>${escapeHtml(cls ? cls.name : classId)} — ${metrics.length} ativo(s)</h2>
+        <button class="btn btn-primary" id="addAssetBtn">${icon('plus',15)} Adicionar ${escapeHtml(cls?cls.name:'ativo')}</button>
+      </div>
+      <div id="assetTableWrap"></div>
+    </div>
+  `;
+  document.getElementById('addAssetBtn').onclick = ()=> openAssetModal(null, classId);
+  renderAssetTable(document.getElementById('assetTableWrap'), metrics, classId);
+}
+
+function renderAssetTable(container, metrics, classId){
+  if(!metrics.length){
+    container.innerHTML = `<div class="empty-state"><div class="icon">＋</div><h4>Ainda não existem ativos nesta categoria</h4><p>Adicione o primeiro para começar a acompanhar a sua evolução.</p></div>`;
+    return;
+  }
+  const showQty = usesQuantityFields(classId);
+  const extraCols = showQty ? `<th class="num">Quantidade</th><th class="num">Preço médio</th>` : '';
+  container.innerHTML = `
+    <div class="table-wrap"><table>
+      <thead><tr>
+        <th>Ativo</th><th>Instituição</th>${extraCols}
+        <th class="num">Investido</th><th class="num">Valor atual</th><th class="num">Ganho/Perda</th><th class="num">Rentabilidade</th>
+        <th class="num">${classId==='p2p'||classId==='deposito' ? 'Juros' : 'Dividendos'}</th><th></th>
+      </tr></thead>
+      <tbody>
+        ${metrics.map(m=>`
+          <tr>
+            <td><strong>${escapeHtml(m.asset.name)}</strong>${m.asset.ticker?`<div class="muted" style="font-size:11px;">${escapeHtml(m.asset.ticker)}</div>`:''}</td>
+            <td>${escapeHtml(m.asset.institution||'—')}</td>
+            ${showQty ? `<td class="num">${fmtNumber(m.quantity,4)}</td><td class="num">${fmtMoney(m.avgPrice,m.asset.currency)}</td>` : ''}
+            <td class="num">${fmtMoney(m.netInvested,m.asset.currency)}</td>
+            <td class="num">${fmtMoney(m.currentValue,m.asset.currency)}</td>
+            <td class="num ${m.gainLoss>=0?'pos':'neg'}">${fmtMoney(m.gainLoss,m.asset.currency)}</td>
+            <td class="num ${m.returnPct>=0?'pos':'neg'}">${fmtPct(m.returnPct)}</td>
+            <td class="num">${fmtMoney(classId==='p2p'||classId==='deposito'?m.interest:m.dividends,m.asset.currency)}</td>
+            <td>
+              <button class="btn btn-sm btn-icon" data-view="${m.asset.id}" title="Ver detalhe">${icon('bar',14)}</button>
+              <button class="btn btn-sm btn-icon" data-edit="${m.asset.id}" title="Editar">${icon('edit',14)}</button>
+              <button class="btn btn-sm btn-icon" data-del="${m.asset.id}" title="Eliminar">${icon('trash',14)}</button>
+            </td>
+          </tr>`).join('')}
+      </tbody>
+    </table></div>`;
+  container.querySelectorAll('[data-edit]').forEach(b=> b.onclick = ()=> openAssetModal(assetById(b.dataset.edit), null));
+  container.querySelectorAll('[data-view]').forEach(b=> b.onclick = ()=> openAssetDetailModal(assetById(b.dataset.view)));
+  container.querySelectorAll('[data-del]').forEach(b=> b.onclick = ()=> handleDeleteAsset(b.dataset.del));
+}
+
+function handleDeleteAsset(assetId){
+  const asset = assetById(assetId);
+  if(!asset) return;
+  const hasMovements = STATE.movements.some(m=>m.assetId===assetId);
+  const hasValuations = STATE.valuations.some(v=>v.assetId===assetId);
+  const msg = (hasMovements || hasValuations)
+    ? `O ativo <strong>${escapeHtml(asset.name)}</strong> tem ${hasMovements?'movimentos':''}${hasMovements&&hasValuations?' e ':''}${hasValuations?'histórico de valorização':''} associados. Ao eliminar, isso será também apagado permanentemente. Esta ação não pode ser desfeita.`
+    : `Tem a certeza que quer eliminar <strong>${escapeHtml(asset.name)}</strong>?`;
+  confirmDialog('Eliminar ativo', msg, ()=>{
+    STATE.assets = STATE.assets.filter(a=>a.id!==assetId);
+    STATE.movements = STATE.movements.filter(m=>m.assetId!==assetId);
+    STATE.valuations = STATE.valuations.filter(v=>v.assetId!==assetId);
+    STATE.isDemo = false;
+    saveState();
+    toast('Ativo eliminado.', 'ok');
+    navigate(CURRENT_PAGE);
+  }, true);
+}
+
+/* Modal de detalhe de um ativo: métricas completas + histórico de movimentos + XIRR */
+function openAssetDetailModal(asset){
+  if(!asset) return;
+  const m = computeAssetMetrics(asset, null, true); // withXirr=true: aqui o valor é mostrado ao utilizador
+  const mvs = movementsForAsset(asset.id);
+  const vals = valuationsForAsset(asset.id).slice().reverse();
+  openModal(`
+    <div class="modal-header"><h3>${escapeHtml(asset.name)}</h3><button class="modal-close">${icon('x',18)}</button></div>
+    <div class="modal-body">
+      <div class="kv-list" style="margin-bottom:16px;">
+        <div class="kv-row"><span class="k">Classe</span><span class="v">${badgeForClass(asset.classId)}</span></div>
+        <div class="kv-row"><span class="k">Instituição</span><span class="v">${escapeHtml(asset.institution||'—')}</span></div>
+        ${usesQuantityFields(asset.classId) ? `<div class="kv-row"><span class="k">Quantidade</span><span class="v">${fmtNumber(m.quantity,4)}</span></div>
+        <div class="kv-row"><span class="k">Preço médio</span><span class="v">${fmtMoney(m.avgPrice,asset.currency)}</span></div>` : ''}
+        <div class="kv-row"><span class="k">Capital investido (líquido)</span><span class="v">${fmtMoney(m.netInvested,asset.currency)}</span></div>
+        <div class="kv-row"><span class="k">Valor atual</span><span class="v">${fmtMoney(m.currentValue,asset.currency)}</span></div>
+        <div class="kv-row"><span class="k">Ganho/Perda</span><span class="v ${m.gainLoss>=0?'pos':'neg'}">${fmtMoney(m.gainLoss,asset.currency)}</span></div>
+        <div class="kv-row"><span class="k">Rentabilidade simples</span><span class="v ${m.returnPct>=0?'pos':'neg'}">${fmtPct(m.returnPct)}</span></div>
+        <div class="kv-row"><span class="k">Dividendos</span><span class="v">${fmtMoney(m.dividends,asset.currency)}</span></div>
+        <div class="kv-row"><span class="k">Juros</span><span class="v">${fmtMoney(m.interest,asset.currency)}</span></div>
+        <div class="kv-row"><span class="k">Bónus <span class="tooltip-i" data-tip="Bónus dado pela plataforma/ativo — não é dinheiro seu, por isso não conta como capital investido, apenas como rendimento.">i</span></span><span class="v">${fmtMoney(m.bonus,asset.currency)}</span></div>
+        <div class="kv-row"><span class="k">Comissões pagas</span><span class="v">${fmtMoney(m.commissions,asset.currency)}</span></div>
+        <div class="kv-row"><span class="k">XIRR (rentabilidade anualizada real)
+          <span class="tooltip-i" data-tip="XIRR calcula a rentabilidade anualizada tendo em conta as datas exatas de cada entrada/saída de capital — mais rigoroso do que a rentabilidade simples quando há vários reforços.">i</span></span>
+          <span class="v ${m.xirr!==null && m.xirr>=0 ? 'pos':'neg'}">${m.xirr!==null ? fmtPct(m.xirr)+'/ano' : 'Dados insuficientes'}</span></div>
+      </div>
+      <h4 style="margin:0 0 8px;font-size:13px;">Histórico de movimentos (${mvs.length})</h4>
+      <div class="table-wrap" style="max-height:180px;overflow-y:auto;margin-bottom:18px;">
+        <table><thead><tr><th>Data</th><th>Tipo</th><th class="num">Qtd.</th><th class="num">Preço</th><th class="num">Valor</th></tr></thead>
+        <tbody>${mvs.length ? mvs.slice().reverse().map(mv=>`<tr><td>${fmtDate(mv.date)}</td><td>${escapeHtml(mv.type)}</td><td class="num">${mv.quantity?fmtNumber(mv.quantity,4):'—'}</td><td class="num">${mv.price?fmtMoney(mv.price,asset.currency):'—'}</td><td class="num">${fmtMoney(mv.value,asset.currency)}</td></tr>`).join('') : `<tr><td colspan="5" class="muted" style="text-align:center;">Sem movimentos.</td></tr>`}</tbody></table>
+      </div>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;gap:10px;flex-wrap:wrap;">
+        <h4 style="margin:0;font-size:13px;">Histórico de valorização
+          <span class="tooltip-i" data-tip="Regista quanto este ativo valia numa determinada data — NÃO é um movimento de dinheiro (para depósitos, levantamentos, compras ou vendas, use Movimentos). Serve apenas para reconstruir a evolução real do valor ao longo do tempo nos gráficos de Evolução, Performance e Drawdown, em vez da aproximação por capital investido.">i</span>
+        </h4>
+        <button class="btn btn-sm" id="dAddValBtn">${icon('plus',13)} Adicionar valorização</button>
+      </div>
+      <div class="table-wrap" style="max-height:180px;overflow-y:auto;">
+        <table><thead><tr><th>Data</th><th class="num">Valor nessa data</th><th></th></tr></thead>
+        <tbody>${vals.length ? vals.map(v=>`<tr><td>${fmtDate(v.date)}</td><td class="num">${fmtMoney(v.value,asset.currency)}</td><td>
+          <button class="btn btn-sm btn-icon" data-edit-val="${v.id}" title="Editar">${icon('edit',13)}</button>
+          <button class="btn btn-sm btn-icon" data-del-val="${v.id}" title="Eliminar">${icon('trash',13)}</button></td></tr>`).join('')
+          : `<tr><td colspan="3" class="muted" style="text-align:center;">Ainda sem valorizações registadas para este ativo.</td></tr>`}</tbody></table>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn" id="dEditBtn">Editar ativo</button>
+      <button class="btn btn-primary" id="dMovBtn">Adicionar movimento</button>
+    </div>`, {wide:true});
+  document.getElementById('dEditBtn').onclick = ()=>{ closeModal(); openAssetModal(asset,null); };
+  document.getElementById('dMovBtn').onclick = ()=>{ closeModal(); openMovementModal(null, {assetId:asset.id, classId:asset.classId}); };
+  document.getElementById('dAddValBtn').onclick = ()=>{ closeModal(); openValuationModal(asset, null); };
+  document.querySelectorAll('[data-edit-val]').forEach(b=> b.onclick = ()=>{ closeModal(); openValuationModal(asset, STATE.valuations.find(v=>v.id===b.dataset.editVal)); });
+  document.querySelectorAll('[data-del-val]').forEach(b=> b.onclick = ()=>{
+    const valId = b.dataset.delVal;
+    confirmDialog('Eliminar valorização', 'Tem a certeza que quer eliminar este registo de valorização? Isto não afeta o capital investido — só a evolução histórica mostrada nos gráficos deixará de refletir este ponto.', ()=>{
+      STATE.valuations = STATE.valuations.filter(v=>v.id!==valId);
+      saveState();
+      toast('Valorização eliminada.', 'ok');
+      openAssetDetailModal(asset);
+    }, true);
+  });
+}
+
+/* Formulário de criação/edição de uma valorização histórica — ver nota em openAssetDetailModal sobre a
+   diferença entre isto e um Movimento. */
+function openValuationModal(asset, existing){
+  const isEdit = !!existing;
+  const v = existing || { date: todayISO(), value:'' };
+  openModal(`
+    <div class="modal-header"><h3>${isEdit?'Editar':'Adicionar'} valorização</h3><button class="modal-close">${icon('x',18)}</button></div>
+    <div class="modal-body">
+      <p class="muted" style="font-size:12.5px;margin:0 0 14px;line-height:1.5;">
+        Regista quanto <strong>${escapeHtml(asset.name)}</strong> valia nesta data. Isto NÃO move dinheiro nem altera o capital investido — para depósitos, levantamentos, compras ou vendas, use Movimentos.
+      </p>
+      <div class="form-grid single">
+        <div class="field"><label>Data *</label><input type="date" id="vfDate" value="${v.date}" max="${todayISO()}"></div>
+        <div class="field"><label>Valor nesta data (${asset.currency}) *</label><input type="number" step="0.01" class="num-input" id="vfValue" value="${v.value!==undefined && v.value!==''?v.value:''}"></div>
+      </div>
+      <div class="field-error" id="err-vf"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn" id="vfCancel">Cancelar</button>
+      ${isEdit ? `<button class="btn btn-danger" id="vfDelete">Eliminar</button>` : ''}
+      <button class="btn btn-primary" id="vfSave">${isEdit?'Guardar alterações':'Adicionar'}</button>
+    </div>`);
+  document.getElementById('vfCancel').onclick = ()=>{ closeModal(); openAssetDetailModal(asset); };
+  if(isEdit){
+    document.getElementById('vfDelete').onclick = ()=>{
+      STATE.valuations = STATE.valuations.filter(vv=>vv.id!==existing.id);
+      saveState();
+      toast('Valorização eliminada.', 'ok');
+      closeModal();
+      openAssetDetailModal(asset);
+    };
+  }
+  document.getElementById('vfSave').onclick = ()=>{
+    const date = document.getElementById('vfDate').value;
+    const rawValue = document.getElementById('vfValue').value;
+    const errEl = document.getElementById('err-vf');
+    if(!ISO_DATE_RE.test(date)){ errEl.textContent = 'Indique uma data válida.'; return; }
+    if(date > todayISO()){ errEl.textContent = 'A data não pode ser no futuro.'; return; }
+    if(rawValue === '' || isNaN(num(rawValue))){ errEl.textContent = 'Indique um valor válido.'; return; }
+    errEl.textContent = '';
+    if(isEdit && existing.date !== date){
+      // se a data foi alterada, remove o registo antigo para não ficar duplicado na nova data
+      STATE.valuations = STATE.valuations.filter(vv=>vv.id!==existing.id);
+    }
+    upsertValuation(asset.id, date, num(rawValue));
+    STATE.isDemo = false;
+    saveState();
+    toast('Valorização guardada.', 'ok');
+    closeModal();
+    openAssetDetailModal(asset);
+  };
+}
+
+/* ---------------------------------------------------------------------
+   10. FORMULÁRIO DE ATIVO (criar / editar) — adapta-se à classe
+   --------------------------------------------------------------------- */
+function openAssetModal(existingAsset, presetClassId){
+  const isEdit = !!existingAsset;
+  const classId = existingAsset ? existingAsset.classId : (presetClassId || STATE.classes[0].id);
+  const a = existingAsset || { id:null, name:'', ticker:'', isin:'', institution:'', currency: STATE.settings.baseCurrency, firstDate: todayISO(), currentValue:0, currentPrice:0, notes:'', extra:{} };
+
+  const showQtyFields = usesQuantityFields(classId);
+  const extraFields = classId==='deposito' ? `
+    <div class="field"><label>Data de vencimento</label><input type="date" id="afVencimento" value="${a.extra && a.extra.dataVencimento || ''}"></div>
+    <div class="field"><label>Taxa de juro anual (%)</label><input type="number" step="0.01" class="num-input" id="afTaxa" value="${a.extra && a.extra.taxaJuro || ''}"></div>
+  ` : classId==='p2p' ? `
+    <div class="field span2 checkbox-row"><input type="checkbox" id="afAtraso" ${a.extra && a.extra.atraso ? 'checked':''}><label for="afAtraso" style="margin:0;">Existe capital em atraso / default nesta plataforma</label></div>
+  ` : showQtyFields ? `
+    <div class="field"><label>Preço atual por unidade <span class="tooltip-i" data-tip="Usado para calcular automaticamente o valor atual = quantidade × preço atual. Deixe em branco para introduzir o valor atual manualmente.">i</span></label><input type="number" step="0.0001" class="num-input" id="afPrecoAtual" value="${a.currentPrice||''}"></div>
+  ` : '';
+
+  openModal(`
+    <div class="modal-header"><h3>${isEdit?'Editar':'Adicionar'} ativo</h3><button class="modal-close">${icon('x',18)}</button></div>
+    <div class="modal-body">
+      <form id="assetForm">
+        <div class="form-grid">
+          <div class="field span2">
+            <label>Classe de investimento</label>
+            <select id="afClass" ${isEdit?'disabled':''}>${STATE.classes.map(c=>`<option value="${c.id}" ${c.id===classId?'selected':''}>${escapeHtml(c.name)}</option>`).join('')}</select>
+          </div>
+          <div class="field span2">
+            <label>Nome ${classId==='p2p'?'/ Plataforma':''} *</label>
+            <input type="text" id="afName" value="${escapeHtml(a.name)}" placeholder="Ex: iShares Core S&P 500">
+            <div class="field-error" id="err-afName"></div>
+          </div>
+          ${showQtyFields ? `
+          <div class="field"><label>Ticker</label><input type="text" id="afTicker" value="${escapeHtml(a.ticker||'')}" placeholder="SXR8"></div>
+          <div class="field"><label>ISIN</label><input type="text" id="afIsin" value="${escapeHtml(a.isin||'')}" placeholder="IE00B5BMR087"></div>` : ''}
+          <div class="field"><label>Instituição ${classId==='deposito'?'(banco / local)':classId==='p2p'?'(plataforma)':'(corretora)'}</label><input type="text" id="afInstitution" value="${escapeHtml(a.institution||'')}"></div>
+          <div class="field"><label>Moeda</label>
+            <select id="afCurrency">${Object.keys(CURRENCY_SYMBOLS).map(c=>`<option value="${c}" ${c===a.currency?'selected':''}>${c}</option>`).join('')}</select>
+          </div>
+          <div class="field"><label>Data da primeira operação</label><input type="date" id="afDate" value="${a.firstDate||todayISO()}"></div>
+          ${!showQtyFields ? `<div class="field"><label>Valor atual ${classId==='deposito'?'(capital)':''} <span class="tooltip-i" data-tip="Atualize manualmente sempre que quiser refletir o valor de mercado mais recente. A aplicação não obtém cotações automaticamente.">i</span></label><input type="number" step="0.01" class="num-input" id="afCurrentValue" value="${a.currentValue||''}"></div>` : `<div class="field"><label>Valor atual (alternativa manual) <span class="tooltip-i" data-tip="Só é usado se não preencher o 'Preço atual por unidade' acima. Útil se ainda não souber a cotação exata.">i</span></label><input type="number" step="0.01" class="num-input" id="afCurrentValue" value="${a.currentValue||''}"></div>`}
+          ${extraFields}
+          <div class="field span2"><label>Observações</label><textarea id="afNotes">${escapeHtml(a.notes||'')}</textarea></div>
+        </div>
+      </form>
+    </div>
+    <div class="modal-footer">
+      <button class="btn" id="afCancel">Cancelar</button>
+      <button class="btn btn-primary" id="afSave">${isEdit?'Guardar alterações':'Adicionar ativo'}</button>
+    </div>`);
+
+  document.getElementById('afCancel').onclick = closeModal;
+  if(!isEdit){
+    document.getElementById('afClass').onchange = (e)=>{ closeModal(); openAssetModal(null, e.target.value); };
+  }
+  document.getElementById('afSave').onclick = ()=>{
+    const name = document.getElementById('afName').value.trim();
+    const errEl = document.getElementById('err-afName');
+    if(!name){ errEl.textContent = 'O nome é obrigatório.'; document.getElementById('afName').classList.add('invalid'); return; }
+    errEl.textContent=''; document.getElementById('afName').classList.remove('invalid');
+
+    const curClassId = isEdit ? classId : document.getElementById('afClass').value;
+    const extra = existingAsset ? Object.assign({}, existingAsset.extra) : {};
+    if(curClassId==='deposito'){ extra.dataVencimento = document.getElementById('afVencimento').value; extra.taxaJuro = num(document.getElementById('afTaxa').value); }
+    if(curClassId==='p2p'){ extra.atraso = document.getElementById('afAtraso').checked; }
+
+    const payload = {
+      name, ticker: document.getElementById('afTicker') ? document.getElementById('afTicker').value.trim() : '',
+      isin: document.getElementById('afIsin') ? document.getElementById('afIsin').value.trim() : '',
+      institution: document.getElementById('afInstitution').value.trim(),
+      currency: document.getElementById('afCurrency').value,
+      firstDate: document.getElementById('afDate').value || todayISO(),
+      currentValue: document.getElementById('afCurrentValue') ? num(document.getElementById('afCurrentValue').value) : (existingAsset?existingAsset.currentValue:0),
+      currentPrice: document.getElementById('afPrecoAtual') ? num(document.getElementById('afPrecoAtual').value) : (existingAsset?existingAsset.currentPrice:0),
+      notes: document.getElementById('afNotes').value.trim(),
+      extra,
+    };
+    if(isEdit){
+      Object.assign(existingAsset, payload);
+      toast('Ativo atualizado.', 'ok');
+    } else {
+      STATE.assets.push(Object.assign({id:uid('asset'), classId:curClassId}, payload));
+      toast('Ativo adicionado.', 'ok');
+    }
+    STATE.isDemo = false;
+    saveState();
+    closeModal();
+    navigate(CURRENT_PAGE);
+  };
+}
+
+/* ---------------------------------------------------------------------
+   11. FORMULÁRIO DE MOVIMENTO (criar / editar)
+   --------------------------------------------------------------------- */
+function openMovementModal(existingMovement, preset){
+  preset = preset || {};
+  const isEdit = !!existingMovement;
+  const mv = existingMovement || {
+    id:null, date: todayISO(), type: preset.type || 'Compra', classId: preset.classId || (STATE.assets[0]?STATE.assets[0].classId:'etf'),
+    assetId: preset.assetId || (STATE.assets[0]?STATE.assets[0].id:''), institution:'', quantity:0, price:0, value:0, commission:0,
+    currency: STATE.settings.baseCurrency, notes:''
+  };
+  if(!STATE.assets.length){
+    openModal(`<div class="modal-header"><h3>Novo movimento</h3><button class="modal-close">${icon('x',18)}</button></div>
+      <div class="modal-body"><div class="empty-state"><div class="icon">＋</div><h4>Ainda não tem ativos</h4><p>Crie primeiro um ativo em "Gerir Ativos" para poder registar movimentos.</p></div></div>
+      <div class="modal-footer"><button class="btn btn-primary" id="goManage">Ir para Gerir Ativos</button></div>`);
+    document.getElementById('goManage').onclick = ()=>{ closeModal(); navigate('gerir-ativos'); };
+    return;
+  }
+  const renderAssetOptions = (classId)=> STATE.assets.filter(a=>a.classId===classId).map(a=>`<option value="${a.id}" ${a.id===mv.assetId?'selected':''}>${escapeHtml(a.name)}</option>`).join('');
+
+  openModal(`
+    <div class="modal-header"><h3>${isEdit?'Editar':'Novo'} movimento</h3><button class="modal-close">${icon('x',18)}</button></div>
+    <div class="modal-body">
+      <div class="form-grid">
+        <div class="field"><label>Data *</label><input type="date" id="mfDate" value="${mv.date}"></div>
+        <div class="field"><label>Tipo *</label><select id="mfType">${MOVEMENT_TYPES.map(t=>`<option value="${t}" ${t===mv.type?'selected':''}>${t}</option>`).join('')}</select></div>
+        <div class="field"><label>Classe *</label><select id="mfClass">${STATE.classes.map(c=>`<option value="${c.id}" ${c.id===mv.classId?'selected':''}>${escapeHtml(c.name)}</option>`).join('')}</select></div>
+        <div class="field"><label>Ativo *</label><select id="mfAsset">${renderAssetOptions(mv.classId)}</select></div>
+        <div class="field"><label>Instituição</label><input type="text" id="mfInstitution" value="${escapeHtml(mv.institution||'')}"></div>
+        <div class="field"><label>Moeda</label><select id="mfCurrency">${Object.keys(CURRENCY_SYMBOLS).map(c=>`<option value="${c}" ${c===mv.currency?'selected':''}>${c}</option>`).join('')}</select></div>
+        <div class="field"><label>Quantidade</label><input type="number" step="0.0001" class="num-input" id="mfQty" value="${mv.quantity||''}"></div>
+        <div class="field"><label>Preço unitário</label><input type="number" step="0.0001" class="num-input" id="mfPrice" value="${mv.price||''}"></div>
+        <div class="field"><label>Valor total * <span class="tooltip-i" data-tip="Se preencher quantidade e preço, este campo é calculado automaticamente — mas pode sempre editar manualmente.">i</span></label><input type="number" step="0.01" class="num-input" id="mfValue" value="${mv.value||''}"></div>
+        <div class="field"><label>Comissão</label><input type="number" step="0.01" class="num-input" id="mfCommission" value="${mv.commission||''}"></div>
+        <div class="field span2"><label>Observações</label><textarea id="mfNotes">${escapeHtml(mv.notes||'')}</textarea></div>
+        <div class="field-error span2" id="err-mf"></div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn" id="mfCancel">Cancelar</button>
+      <button class="btn btn-primary" id="mfSave">${isEdit?'Guardar alterações':'Registar movimento'}</button>
+    </div>`);
+
+  document.getElementById('mfClass').onchange = (e)=>{ document.getElementById('mfAsset').innerHTML = renderAssetOptions(e.target.value); };
+  const qtyEl = document.getElementById('mfQty'), priceEl = document.getElementById('mfPrice'), valueEl = document.getElementById('mfValue');
+  function autoCalc(){ const q=num(qtyEl.value), p=num(priceEl.value); if(q && p) valueEl.value = +(q*p).toFixed(2); }
+  qtyEl.oninput = autoCalc; priceEl.oninput = autoCalc;
+  document.getElementById('mfCancel').onclick = closeModal;
+  document.getElementById('mfSave').onclick = ()=>{
+    const assetSel = document.getElementById('mfAsset');
+    if(!assetSel.value){ document.getElementById('err-mf').textContent = 'Selecione um ativo válido para esta classe.'; return; }
+    const value = num(valueEl.value);
+    if(!value && document.getElementById('mfType').value !== 'Transferência'){
+      document.getElementById('err-mf').textContent = 'Indique o valor do movimento.'; return;
+    }
+    document.getElementById('err-mf').textContent = '';
+    const payload = {
+      date: document.getElementById('mfDate').value || todayISO(),
+      type: document.getElementById('mfType').value,
+      classId: document.getElementById('mfClass').value,
+      assetId: assetSel.value,
+      institution: document.getElementById('mfInstitution').value.trim(),
+      quantity: num(qtyEl.value), price: num(priceEl.value), value,
+      commission: num(document.getElementById('mfCommission').value),
+      currency: document.getElementById('mfCurrency').value,
+      notes: document.getElementById('mfNotes').value.trim(),
+    };
+    if(isEdit){ Object.assign(existingMovement, payload); toast('Movimento atualizado.', 'ok'); }
+    else { STATE.movements.push(Object.assign({id:uid('mv')}, payload)); toast('Movimento registado.', 'ok'); }
+    STATE.isDemo = false;
+    saveState();
+    closeModal();
+    navigate(CURRENT_PAGE);
+  };
+}
+
+/* ---------------------------------------------------------------------
+   12. PÁGINA: INVESTIMENTOS (tabela principal, pesquisável e ordenável)
+   --------------------------------------------------------------------- */
+let INVEST_SORT = {col:'current', dir:-1};
+let INVEST_SEARCH = '';
+function renderInvestimentos(root){
+  root.innerHTML = `
+    <div class="card" style="margin-bottom:14px;">
+      <div id="filterBarHost"></div>
+    </div>
+    <div class="card">
+      <div class="card-header-row">
+        <h2>Todos os investimentos</h2>
+        <div style="display:flex;gap:8px;">
+          <input type="text" id="investSearch" placeholder="Pesquisar ativo, instituição..." style="width:220px;">
+          <button class="btn btn-sm" id="exportCsvBtn">${icon('download',14)} Exportar CSV</button>
+          <button class="btn btn-primary btn-sm" id="addInvestBtn">${icon('plus',14)} Adicionar</button>
+        </div>
+      </div>
+      <div id="investTableWrap"></div>
+    </div>`;
+  renderFilterBar(document.getElementById('filterBarHost'), { onChange: ()=> renderInvestTable() });
+  document.getElementById('investSearch').oninput = (e)=>{ INVEST_SEARCH = e.target.value.toLowerCase(); renderInvestTable(); };
+  document.getElementById('exportCsvBtn').onclick = exportAssetsCsv;
+  document.getElementById('addInvestBtn').onclick = ()=> openAssetModal(null, STATE.classes[0].id);
+  renderInvestTable();
+}
+function renderInvestTable(){
+  const container = document.getElementById('investTableWrap');
+  if(!container) return;
+  let list = computeAllAssetMetrics().filter(m => filteredAssets().some(a=>a.id===m.asset.id));
+  if(INVEST_SEARCH){
+    list = list.filter(m => (m.asset.name+m.asset.institution+m.asset.ticker).toLowerCase().includes(INVEST_SEARCH));
+  }
+  const total = list.reduce((s,m)=>s+m.currentValue,0);
+  const sortMap = { asset:'asset.name', class:'asset.classId', institution:'asset.institution', invested:'netInvested', current:'currentValue', gain:'gainLoss', pct:'returnPct' };
+  list.sort((a,b)=>{
+    const path = sortMap[INVEST_SORT.col].split('.');
+    let va=a, vb=b; path.forEach(p=>{ va=va[p]; vb=vb[p]; });
+    if(typeof va === 'string') return va.localeCompare(vb) * INVEST_SORT.dir;
+    return (va-vb) * INVEST_SORT.dir;
+  });
+  if(!list.length){
+    container.innerHTML = `<div class="empty-state"><div class="icon">🔍</div><h4>Nenhum investimento encontrado</h4><p>Ajuste os filtros ou adicione um novo ativo.</p></div>`;
+    return;
+  }
+  const arrow = (col)=> INVEST_SORT.col===col ? `<span class="arrow">${INVEST_SORT.dir===1?'▲':'▼'}</span>` : '';
+  container.innerHTML = `
+    <div class="table-wrap"><table>
+      <thead><tr>
+        <th data-sort="asset">Ativo${arrow('asset')}</th>
+        <th data-sort="class">Classe${arrow('class')}</th>
+        <th data-sort="institution">Instituição${arrow('institution')}</th>
+        <th class="num" data-sort="invested">Investido${arrow('invested')}</th>
+        <th class="num" data-sort="current">Valor Atual${arrow('current')}</th>
+        <th class="num" data-sort="gain">Ganho/Perda${arrow('gain')}</th>
+        <th class="num" data-sort="pct">Rentabilidade${arrow('pct')}</th>
+        <th class="num">Peso</th><th></th>
+      </tr></thead>
+      <tbody>
+        ${list.map(m=>{
+          const weight = total>0 ? (m.currentValue/total)*100 : 0;
+          return `<tr>
+            <td><strong>${escapeHtml(m.asset.name)}</strong></td>
+            <td>${badgeForClass(m.asset.classId)}</td>
+            <td>${escapeHtml(m.asset.institution||'—')}</td>
+            <td class="num">${fmtMoney(m.netInvested,m.asset.currency)}</td>
+            <td class="num">${fmtMoney(m.currentValue,m.asset.currency)}</td>
+            <td class="num ${m.gainLoss>=0?'pos':'neg'}">${fmtMoney(m.gainLoss,m.asset.currency)}</td>
+            <td class="num ${m.returnPct>=0?'pos':'neg'}">${fmtPct(m.returnPct)}</td>
+            <td class="num">${weight.toFixed(1)}%</td>
+            <td><button class="btn btn-sm btn-icon" data-view="${m.asset.id}">${icon('bar',14)}</button>
+                <button class="btn btn-sm btn-icon" data-edit="${m.asset.id}">${icon('edit',14)}</button>
+                <button class="btn btn-sm btn-icon" data-del="${m.asset.id}">${icon('trash',14)}</button></td>
+          </tr>`;
+        }).join('')}
+      </tbody>
+    </table></div>`;
+  container.querySelectorAll('th[data-sort]').forEach(th=>{
+    th.onclick = ()=>{ const col=th.dataset.sort; if(INVEST_SORT.col===col) INVEST_SORT.dir*=-1; else INVEST_SORT={col,dir:1}; renderInvestTable(); };
+  });
+  container.querySelectorAll('[data-edit]').forEach(b=> b.onclick = ()=> openAssetModal(assetById(b.dataset.edit), null));
+  container.querySelectorAll('[data-view]').forEach(b=> b.onclick = ()=> openAssetDetailModal(assetById(b.dataset.view)));
+  container.querySelectorAll('[data-del]').forEach(b=> b.onclick = ()=> handleDeleteAsset(b.dataset.del));
+}
+function exportAssetsCsv(){
+  const rows = [['Ativo','Classe','Instituicao','Moeda','Investido','ValorAtual','GanhoPerda','Rentabilidade(%)']];
+  computeAllAssetMetrics().forEach(m=>{
+    rows.push([m.asset.name, (classById(m.asset.classId)||{}).name||m.asset.classId, m.asset.institution||'', m.asset.currency,
+      m.netInvested.toFixed(2), m.currentValue.toFixed(2), m.gainLoss.toFixed(2), m.returnPct.toFixed(2)]);
+  });
+  downloadCsv(rows, 'investimentos.csv');
+}
+function downloadCsv(rows, filename){
+  const csv = rows.map(r=> r.map(v=> `"${String(v).replace(/"/g,'""')}"`).join(';')).join('\n');
+  const blob = new Blob(['\uFEFF'+csv], {type:'text/csv;charset=utf-8;'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a'); a.href=url; a.download=filename; document.body.appendChild(a); a.click(); a.remove();
+  URL.revokeObjectURL(url);
+  toast('Exportação concluída.', 'ok');
+}
+
+/* ---------------------------------------------------------------------
+   13. PÁGINA: MOVIMENTOS
+   --------------------------------------------------------------------- */
+let MOV_SEARCH = '';
+function renderMovimentos(root){
+  root.innerHTML = `
+    <div class="card" style="margin-bottom:14px;"><div id="filterBarHost"></div></div>
+    <div class="card">
+      <div class="card-header-row">
+        <h2>Movimentos</h2>
+        <div style="display:flex;gap:8px;">
+          <input type="text" id="movSearch" placeholder="Pesquisar..." style="width:200px;">
+          <button class="btn btn-sm" id="exportMovCsv">${icon('download',14)} Exportar CSV</button>
+          <button class="btn btn-primary btn-sm" id="addMovBtn">${icon('plus',14)} Novo movimento</button>
+        </div>
+      </div>
+      <div id="movTableWrap"></div>
+    </div>`;
+  renderFilterBar(document.getElementById('filterBarHost'), { onChange: renderMovTable });
+  document.getElementById('movSearch').oninput = (e)=>{ MOV_SEARCH = e.target.value.toLowerCase(); renderMovTable(); };
+  document.getElementById('addMovBtn').onclick = ()=> openMovementModal();
+  document.getElementById('exportMovCsv').onclick = ()=>{
+    const rows = [['Data','Tipo','Classe','Ativo','Instituicao','Quantidade','Preco','Valor','Comissao','Moeda','Observacoes']];
+    filteredMovements().forEach(m=> rows.push([m.date,m.type,(classById(m.classId)||{}).name||m.classId,(assetById(m.assetId)||{}).name||'',m.institution||'',m.quantity||0,m.price||0,m.value||0,m.commission||0,m.currency,m.notes||'']));
+    downloadCsv(rows, 'movimentos.csv');
+  };
+  renderMovTable();
+}
+function renderMovTable(){
+  const container = document.getElementById('movTableWrap');
+  if(!container) return;
+  let list = filteredMovements().slice().sort((a,b)=>b.date.localeCompare(a.date));
+  if(MOV_SEARCH){
+    list = list.filter(m => ((assetById(m.assetId)||{}).name+m.type+(m.institution||'')+(m.notes||'')).toLowerCase().includes(MOV_SEARCH));
+  }
+  if(!list.length){
+    container.innerHTML = `<div class="empty-state"><div class="icon">📄</div><h4>Sem movimentos para os filtros aplicados</h4><p>Registe compras, vendas, dividendos, juros e outros fluxos.</p></div>`;
+    return;
+  }
+  container.innerHTML = `
+    <div class="table-wrap"><table>
+      <thead><tr><th>Data</th><th>Tipo</th><th>Classe</th><th>Ativo</th><th>Instituição</th><th class="num">Qtd.</th><th class="num">Preço</th><th class="num">Valor</th><th class="num">Comissão</th><th></th></tr></thead>
+      <tbody>${list.map(m=>{
+        const asset = assetById(m.assetId);
+        const rowClass = m.type==='Depósito' ? 'row-deposit' : m.type==='Levantamento' ? 'row-withdraw' : '';
+        return `<tr class="${rowClass}">
+          <td>${fmtDate(m.date)}</td><td>${escapeHtml(m.type)}</td><td class="badge-cell">${badgeForClass(m.classId)}</td>
+          <td>${escapeHtml(asset?asset.name:'—')}</td><td>${escapeHtml(m.institution||'—')}</td>
+          <td class="num">${m.quantity?fmtNumber(m.quantity,4):'—'}</td>
+          <td class="num">${m.price?fmtMoney(m.price,m.currency):'—'}</td>
+          <td class="num">${fmtMoney(m.value,m.currency)}</td>
+          <td class="num">${m.commission?fmtMoney(m.commission,m.currency):'—'}</td>
+          <td class="actions-cell"><button class="btn btn-sm btn-icon" data-edit="${m.id}">${icon('edit',14)}</button>
+              <button class="btn btn-sm btn-icon" data-del="${m.id}">${icon('trash',14)}</button></td>
+        </tr>`;
+      }).join('')}</tbody>
+    </table></div>`;
+  container.querySelectorAll('[data-edit]').forEach(b=> b.onclick = ()=> openMovementModal(STATE.movements.find(m=>m.id===b.dataset.edit)));
+  container.querySelectorAll('[data-del]').forEach(b=> b.onclick = ()=>{
+    confirmDialog('Eliminar movimento','Tem a certeza que quer eliminar este movimento? Esta ação não pode ser desfeita.', ()=>{
+      STATE.movements = STATE.movements.filter(m=>m.id!==b.dataset.del);
+      STATE.isDemo = false; saveState(); toast('Movimento eliminado.','ok'); renderMovTable();
+    }, true);
+  });
+}
+
+/* ---------------------------------------------------------------------
+   14. PÁGINA: ANÁLISE MENSAL
+   --------------------------------------------------------------------- */
+function renderAnaliseMensal(root){
+  const years = getAvailableYears();
+  if(!years.includes(ANALYSIS_YEAR)) ANALYSIS_YEAR = years[years.length-1];
+  root.innerHTML = `
+    <div class="card" style="margin-bottom:14px;">
+      <div class="card-header-row">
+        <h2>Análise Mensal</h2>
+        <select id="yearSelect">${years.map(y=>`<option value="${y}" ${y===ANALYSIS_YEAR?'selected':''}>${y}</option>`).join('')}</select>
+      </div>
+      <div class="table-wrap" id="monthlyTableWrap"></div>
+    </div>
+    <div class="card"><div class="card-header-row"><h2>Evolução mensal — ${ANALYSIS_YEAR}</h2></div><div class="chart-box"><canvas id="chartMonthly"></canvas></div></div>
+  `;
+  document.getElementById('yearSelect').onchange = (e)=>{ ANALYSIS_YEAR = e.target.value; renderAnaliseMensal(root); };
+  const rows = computeMonthlyAnalysis(ANALYSIS_YEAR);
+  const monthNames = ['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'];
+  document.getElementById('monthlyTableWrap').innerHTML = `
+    <table><thead><tr><th>Mês</th><th class="num">Capital Inicial</th><th class="num">Reforços</th><th class="num">Levantamentos</th>
+      <th class="num">Juros</th><th class="num">Dividendos</th><th class="num">Bónus</th><th class="num">Capital Final</th><th class="num">Rentabilidade</th></tr></thead>
+      <tbody>${rows.map(r=>`<tr ${!r.hasData?'style="opacity:.45"':''}>
+        <td>${monthNames[r.month-1]}</td>
+        <td class="num">${fmtMoney(r.capitalInicial)}</td>
+        <td class="num">${fmtMoney(r.reforços)}</td>
+        <td class="num">${fmtMoney(r.levantamentos)}</td>
+        <td class="num">${fmtMoney(r.juros)}</td>
+        <td class="num">${fmtMoney(r.dividendos)}</td>
+        <td class="num">${fmtMoney(r.bonus)}</td>
+        <td class="num"><strong>${fmtMoney(r.capitalFinal)}</strong></td>
+        <td class="num ${r.rentabilidade>=0?'pos':'neg'}">${fmtPct(r.rentabilidade)}</td>
+      </tr>`).join('')}</tbody></table>`;
+
+  destroyChart('monthly');
+  const c = chartColors();
+  CHART_REGISTRY['monthly'] = safeMakeChart(document.getElementById('chartMonthly'), {
+    type:'bar',
+    data:{ labels: rows.map(r=>monthNames[r.month-1]), datasets:[
+      {label:'Reforços', data: rows.map(r=>r.reforços), backgroundColor:c.accent, borderRadius:4},
+      {label:'Levantamentos', data: rows.map(r=>-r.levantamentos), backgroundColor:c.negative, borderRadius:4},
+      {label:'Juros + Dividendos + Bónus', data: rows.map(r=>r.juros+r.dividendos+r.bonus), backgroundColor:c.palette[2], borderRadius:4},
+    ]},
+    options: baseChartOptions(c, {currency:true})
+  });
+}
+
+/* ---------------------------------------------------------------------
+   15. PÁGINA: PERFORMANCE
+   --------------------------------------------------------------------- */
+function renderPerformance(root){
+  const series = computeMonthlySeries();
+  const assetMetrics = computeAllAssetMetrics();
+  const summary = computePortfolioSummary(assetMetrics);
+  // CORREÇÃO DE AUDITORIA: "melhor mês" / "pior mês" usa agora a mesma fórmula (só rendimentos, nunca
+  // reforços/levantamentos) da Análise Mensal e do Dashboard — ver computeMonthlyAnalysis. Anteriormente
+  // comparava valores de "património" consecutivos que, para meses passados, são uma aproximação baseada
+  // em capital investido; isso fazia um reforço grande parecer, incorretamente, um "mês excelente".
+  const monthlyRowsWithData = computeAllMonthlyRows().filter(r=>r.hasData);
+  const bestMonth = monthlyRowsWithData.length ? monthlyRowsWithData.reduce((a,b)=> b.rentabilidade>a.rentabilidade?b:a) : null;
+  const worstMonth = monthlyRowsWithData.length ? monthlyRowsWithData.reduce((a,b)=> b.rentabilidade<a.rentabilidade?b:a) : null;
+  const bestWorstTip = 'Baseado apenas nos rendimentos (juros e dividendos) recebidos nesse mês, em relação ao capital já investido antes dele — nunca inclui reforços nem levantamentos feitos nesse mês, para não confundir dinheiro novo com ganho ou perda.';
+  const maxWealth = series.length ? Math.max(...series.map(s=>s.current)) : 0;
+  const minWealth = series.length ? Math.min(...series.map(s=>s.current)) : 0;
+  const dd = computeDrawdown(series);
+  const bestAsset = assetMetrics.length ? assetMetrics.reduce((a,b)=> b.gainLoss>a.gainLoss?b:a) : null;
+  const worstAsset = assetMetrics.length ? assetMetrics.reduce((a,b)=> b.gainLoss<a.gainLoss?b:a) : null;
+  const portfolioXirr = computePortfolioXirr(assetMetrics);
+
+  root.innerHTML = `
+    <div class="grid grid-stats" style="margin-bottom:14px;">
+      <div class="card stat-card"><div class="stat-label">Rentabilidade total</div><div class="stat-value ${summary.totalReturnPct>=0?'pos':'neg'}">${fmtPct(summary.totalReturnPct)}</div></div>
+      <div class="card stat-card"><div class="stat-label">XIRR anualizado <span class="tooltip-i" data-tip="Rentabilidade anualizada do portfólio ponderada pelas datas exatas de cada fluxo de caixa (entradas, saídas, valor atual). É o indicador mais rigoroso desta aplicação porque, ao contrário dos indicadores mensais/anuais, tem sempre em conta corretamente quando é que cada reforço ou levantamento aconteceu.">i</span></div><div class="stat-value ${portfolioXirr!==null && portfolioXirr>=0?'pos':(portfolioXirr!==null?'neg':'')}">${portfolioXirr!==null?fmtPct(portfolioXirr):'—'}</div></div>
+      <div class="card stat-card"><div class="stat-label">Melhor mês <span class="tooltip-i" data-tip="${bestWorstTip}">i</span></div><div class="stat-value pos">${bestMonth?fmtPct(bestMonth.rentabilidade):'—'}</div><div class="stat-sub neu">${bestMonth?fmtMonthLabel(bestMonth.mk):''}</div></div>
+      <div class="card stat-card"><div class="stat-label">Pior mês <span class="tooltip-i" data-tip="${bestWorstTip}">i</span></div><div class="stat-value neg">${worstMonth?fmtPct(worstMonth.rentabilidade):'—'}</div><div class="stat-sub neu">${worstMonth?fmtMonthLabel(worstMonth.mk):''}</div></div>
+      <div class="card stat-card"><div class="stat-label">Património máximo</div><div class="stat-value">${fmtMoney(maxWealth)}</div></div>
+      <div class="card stat-card"><div class="stat-label">Património mínimo</div><div class="stat-value">${fmtMoney(minWealth)}</div></div>
+    </div>
+    <div class="grid grid-2" style="margin-bottom:14px;">
+      <div class="card">
+        <div class="card-header-row"><h2>Performance acumulada <span class="tooltip-i" data-tip="Mostra o património total acumulado. Onde tiver registado um Histórico de valorização por ativo, os meses correspondentes refletem o valor real nessa data; nos restantes, usa o capital líquido investido como aproximação honesta.">i</span></h2>
+          <select id="accumRange" class="btn-sm" style="padding:5px 8px;border-radius:6px;">
+            <option value="all">Desde o início</option>
+            <optgroup label="Ano específico">${getAvailableYears().slice().reverse().map(y=>`<option value="y:${y}">${y}</option>`).join('')}</optgroup>
+          </select>
+        </div>
+        <div class="chart-box"><canvas id="chartAccum"></canvas></div>
+      </div>
+      <div class="card">
+        <div class="card-header-row"><h2>Drawdown
+          <span class="tooltip-i" data-tip="Queda percentual do património face ao máximo histórico já atingido. A precisão deste indicador depende de ter registado Histórico de valorização nos ativos para os períodos relevantes — sem isso, usa o capital investido como aproximação, o que raramente mostra quedas reais.">i</span></h2></div>
+        <div class="chart-box"><canvas id="chartDrawdown"></canvas></div>
+        <div class="kv-list" style="margin-top:10px;">
+          <div class="kv-row"><span class="k">Drawdown máximo</span><span class="v neg">${fmtPct(dd.maxDrawdown)}</span></div>
+          <div class="kv-row"><span class="k">Período</span><span class="v">${dd.maxDrawdownStart?fmtMonthLabel(dd.maxDrawdownStart)+' → '+fmtMonthLabel(dd.maxDrawdownEnd):'—'}</span></div>
+          <div class="kv-row"><span class="k">Drawdown atual</span><span class="v ${dd.current>=0?'pos':'neg'}">${fmtPct(dd.current)}</span></div>
+        </div>
+      </div>
+    </div>
+    <div class="grid grid-2">
+      <div class="card">
+        <div class="card-title">Maior ganho (ativo)</div>
+        ${bestAsset ? `<div class="stat-value pos">${fmtMoney(bestAsset.gainLoss)}</div><div class="muted" style="margin-top:4px;">${escapeHtml(bestAsset.asset.name)} · ${fmtPct(bestAsset.returnPct)}</div>` : '<p class="muted">Sem dados.</p>'}
+      </div>
+      <div class="card">
+        <div class="card-title">Maior perda (ativo)</div>
+        ${worstAsset ? `<div class="stat-value neg">${fmtMoney(worstAsset.gainLoss)}</div><div class="muted" style="margin-top:4px;">${escapeHtml(worstAsset.asset.name)} · ${fmtPct(worstAsset.returnPct)}</div>` : '<p class="muted">Sem dados.</p>'}
+      </div>
+    </div>
+    <div class="section-divider"></div>
+    <div class="card">
+      <div class="card-header-row"><h2>Comparação com benchmark <span class="tooltip-i" data-tip="Simula quanto valeria hoje o mesmo dinheiro, investido exatamente nas mesmas datas, num índice de referência. Introduza os valores mensais do índice em Definições → Benchmarks.">i</span></h2></div>
+      <div id="benchmarkSummary" class="kv-list" style="margin-bottom:14px;"></div>
+      <div class="chart-box"><canvas id="chartBenchmark"></canvas></div>
+    </div>
+  `;
+  const c = chartColors();
+  document.getElementById('accumRange').onchange = (e)=> drawAccumChart(e.target.value);
+  drawAccumChart('all');
+  destroyChart('drawdown');
+  CHART_REGISTRY['drawdown'] = safeMakeChart(document.getElementById('chartDrawdown'), {
+    type:'line',
+    data:{ labels: dd.series.map(s=>s.label), datasets:[{ label:'Drawdown %', data:dd.series.map(s=>s.drawdown), borderColor:c.negative, backgroundColor:c.negative+'22', fill:true, tension:.2, pointRadius:0 }]},
+    options: Object.assign(baseChartOptions(c,{}), {plugins:{legend:{display:false}}})
+  });
+  drawBenchmarkChart();
+}
+function drawAccumChart(range){
+  destroyChart('accum');
+  let series = computeMonthlySeries();
+  if(range && range.startsWith('y:')){
+    series = series.filter(s=>s.month.startsWith(range.slice(2)));
+  }
+  const c = chartColors();
+  const ctx = document.getElementById('chartAccum');
+  if(!ctx) return;
+  if(!series.length){ ctx.parentElement.innerHTML = emptyChartHTML('Sem dados neste período.'); return; }
+  CHART_REGISTRY['accum'] = safeMakeChart(ctx, {
+    type:'line',
+    data:{ labels: series.map(s=>s.label), datasets:[{ label:'Património acumulado', data:series.map(s=>s.current), borderColor:c.accent, backgroundColor:c.accent+'20', fill:true, tension:.3, pointRadius:1 }]},
+    options: baseChartOptions(c, {currency:true})
+  });
+}
+function computePortfolioXirr(assetMetrics){
+  let flows = [];
+  assetMetrics.forEach(m=> flows = flows.concat(m.flows));
+  flows.sort((a,b)=>a.date.localeCompare(b.date));
+  // agrega fluxos por data para estabilidade numérica
+  const byDate = {};
+  flows.forEach(f=>{ byDate[f.date] = (byDate[f.date]||0) + f.amount; });
+  const agg = Object.keys(byDate).sort().map(d=>({date:d, amount:byDate[d]}));
+  return computeXIRR(agg);
+}
+
+/* CORREÇÃO DE AUDITORIA — comparação com benchmark:
+   A versão anterior comparava o portfólio "indexado a 100" (que para meses passados é uma aproximação de
+   capital investido, não de valor de mercado) com o benchmark "indexado a 100" — isto fazia o simples ato
+   de reforçar a carteira parecer "bater o mercado", o que é exatamente o tipo de erro que esta auditoria
+   pretende eliminar. A nova abordagem simula, em euros reais, quanto valeria HOJE o mesmo dinheiro, investido
+   exatamente nas mesmas datas e nos mesmos montantes, se tivesse sido colocado no índice em vez de na
+   carteira real — comparável diretamente com o valor atual real da carteira (que esse sim é sempre exato). */
+function computeBenchmarkTrajectory(benchKey){
+  const bench = (STATE.benchmarks[benchKey]||[]).slice().sort((a,b)=>a.month.localeCompare(b.month));
+  if(!bench.length) return null;
+  const benchMap = {}; bench.forEach(b=> benchMap[b.month]=b.value);
+  const sortedBenchMonths = bench.map(b=>b.month);
+  function priceForMonth(mk){
+    if(benchMap[mk]!==undefined) return benchMap[mk];
+    let best = null;
+    for(let i=0;i<sortedBenchMonths.length;i++){ if(sortedBenchMonths[i]<=mk) best = benchMap[sortedBenchMonths[i]]; else break; }
+    return best !== null ? best : benchMap[sortedBenchMonths[0]];
+  }
+  const series = computeMonthlySeries();
+  if(!series.length) return null;
+  const mvsByMonth = {};
+  STATE.movements.filter(m=>ISO_DATE_RE.test(m.date)).forEach(m=>{
+    const mk = monthKey(m.date);
+    (mvsByMonth[mk] = mvsByMonth[mk] || []).push(m);
+  });
+  let units = 0;
+  const points = series.map(pt=>{
+    const monthMvs = mvsByMonth[pt.month] || [];
+    const price = priceForMonth(pt.month);
+    monthMvs.forEach(m=>{
+      if(!price) return;
+      // Simula comprar/vender unidades do índice com o mesmo montante e na mesma data do movimento real —
+      // exatamente como se, em vez de investir na carteira, tivesse investido no benchmark.
+      if(CONTRIB_TYPES.includes(m.type)) units += num(m.value)/price;
+      else if(WITHDRAW_TYPES.includes(m.type)) units -= num(m.value)/price;
+    });
+    return { month: pt.month, label: pt.label, value: units * (price||0) };
+  });
+  const lastPrice = priceForMonth(series[series.length-1].month);
+  return { points, finalValue: units*(lastPrice||0), units };
+}
+function drawBenchmarkChart(){
+  destroyChart('benchmark');
+  const c = chartColors();
+  const ctx = document.getElementById('chartBenchmark');
+  const summaryEl = document.getElementById('benchmarkSummary');
+  const sp = computeBenchmarkTrajectory('SP500');
+  const mw = computeBenchmarkTrajectory('MSCIWorld');
+  const series = computeMonthlySeries();
+  if((!sp && !mw) || !series.length){
+    if(ctx) ctx.parentElement.innerHTML = emptyChartHTML('Sem valores de benchmark introduzidos. Adicione-os em Definições.');
+    if(summaryEl) summaryEl.innerHTML = '';
+    return;
+  }
+  const summary = computePortfolioSummary();
+  if(summaryEl){
+    const rows = [`<div class="kv-row"><span class="k">Valor atual real da carteira</span><span class="v">${fmtMoney(summary.totalCurrent)}</span></div>`];
+    if(sp){
+      const diff = summary.totalCurrent - sp.finalValue;
+      rows.push(`<div class="kv-row"><span class="k">Se tivesse investido no S&amp;P 500 (mesmas datas/montantes)</span><span class="v">${fmtMoney(sp.finalValue)} <span class="${diff>=0?'pos':'neg'}">(${diff>=0?'+':''}${fmtMoney(diff)})</span></span></div>`);
+    }
+    if(mw){
+      const diff = summary.totalCurrent - mw.finalValue;
+      rows.push(`<div class="kv-row"><span class="k">Se tivesse investido no MSCI World (mesmas datas/montantes)</span><span class="v">${fmtMoney(mw.finalValue)} <span class="${diff>=0?'pos':'neg'}">(${diff>=0?'+':''}${fmtMoney(diff)})</span></span></div>`);
+    }
+    summaryEl.innerHTML = rows.join('');
+  }
+  if(!ctx) return;
+  const datasets = [
+    { label:'Capital investido (real)', data: series.map(s=>s.invested), borderColor:c.inkFaint, borderDash:[5,4], fill:false, tension:.25, pointRadius:0 },
+  ];
+  if(sp) datasets.push({ label:'Se investido no S&P 500', data: sp.points.map(p=>p.value), borderColor:c.palette[1], fill:false, tension:.25, pointRadius:0 });
+  if(mw) datasets.push({ label:'Se investido no MSCI World', data: mw.points.map(p=>p.value), borderColor:c.palette[3], fill:false, tension:.25, pointRadius:0 });
+  // Ponto único no valor atual REAL da carteira, apenas no último mês, para dar uma referência honesta de comparação
+  const realValuePoints = series.map((s,i)=> i===series.length-1 ? summary.totalCurrent : null);
+  datasets.push({ label:'Valor atual real da carteira (hoje)', data: realValuePoints, borderColor:c.accent, backgroundColor:c.accent, pointRadius:5, pointHoverRadius:6, showLine:false });
+  CHART_REGISTRY['benchmark'] = safeMakeChart(ctx, { type:'line', data:{ labels: series.map(s=>s.label), datasets }, options: baseChartOptions(c,{currency:true}) });
+}
+
+/* ---------------------------------------------------------------------
+   16. PÁGINA: RENDIMENTOS (dividendos & juros + calendário)
+   --------------------------------------------------------------------- */
+let CAL_MONTH = new Date().getMonth(), CAL_YEAR = new Date().getFullYear();
+let INCOME_CHART_RANGE = 'all';
+/* Filtra a série mensal completa de acordo com o período escolhido no seletor — usado tanto pelo gráfico
+   como pelos cartões de estatísticas, para nunca ficarem dessincronizados um do outro. */
+function seriesForIncomeRange(range){
+  const fullSeries = computeMonthlySeries();
+  if(range && range.startsWith('y:')) return fullSeries.filter(s=>s.month.startsWith(range.slice(2)));
+  if(range === '12') return fullSeries.slice(-12);
+  return fullSeries; // 'all'
+}
+function renderRendimentos(root){
+  root.innerHTML = `
+    <div class="grid grid-stats" id="incomeStatsWrap" style="margin-bottom:14px;"></div>
+    <div class="card" style="margin-bottom:14px;">
+      <div class="card-header-row"><h2>Evolução dos rendimentos</h2>
+        <select id="incomeRange" class="btn-sm" style="padding:5px 8px;border-radius:6px;">
+          <option value="all">Desde o início</option>
+          <option value="12">Últimos 12 meses</option>
+          <optgroup label="Ano específico">${getAvailableYears().slice().reverse().map(y=>`<option value="y:${y}">${y}</option>`).join('')}</optgroup>
+        </select>
+      </div>
+      <div class="chart-box"><canvas id="chartIncome"></canvas></div>
+    </div>
+    <div class="card">
+      <div class="card-header-row">
+        <h2>Calendário de rendimentos</h2>
+        <div style="display:flex;align-items:center;gap:8px;">
+          <button class="btn btn-sm btn-icon" id="calPrev">‹</button>
+          <strong id="calLabel" style="min-width:120px;text-align:center;"></strong>
+          <button class="btn btn-sm btn-icon" id="calNext">›</button>
+        </div>
+      </div>
+      <div class="calendar-weekday-row" style="display:grid;grid-template-columns:repeat(7,1fr);gap:6px;margin-bottom:4px;">
+        ${['Seg','Ter','Qua','Qui','Sex','Sáb','Dom'].map(d=>`<div class="calendar-weekday">${d}</div>`).join('')}
+      </div>
+      <div class="calendar-grid" id="calGrid"></div>
+    </div>
+  `;
+  document.getElementById('incomeRange').value = INCOME_CHART_RANGE;
+  document.getElementById('incomeRange').onchange = (e)=>{ INCOME_CHART_RANGE = e.target.value; renderIncomeStats(); drawIncomeChart(); };
+  renderIncomeStats();
+  drawIncomeChart();
+  document.getElementById('calPrev').onclick = ()=>{ CAL_MONTH--; if(CAL_MONTH<0){CAL_MONTH=11;CAL_YEAR--;} renderCalendar(); };
+  document.getElementById('calNext').onclick = ()=>{ CAL_MONTH++; if(CAL_MONTH>11){CAL_MONTH=0;CAL_YEAR++;} renderCalendar(); };
+  renderCalendar();
+}
+/* Cartões de estatísticas — recalculados sempre que o período do seletor muda, para nunca mostrarem um
+   total diferente do que o gráfico por baixo está a apresentar. */
+function renderIncomeStats(){
+  const wrap = document.getElementById('incomeStatsWrap');
+  if(!wrap) return;
+  const range = INCOME_CHART_RANGE;
+  const series = seriesForIncomeRange(range);
+  const isFullRange = range === 'all';
+  const periodLabel = range.startsWith('y:') ? range.slice(2) : range === '12' ? 'últimos 12 meses' : '';
+  const suffix = isFullRange ? '' : ` <span class="muted" style="font-weight:500;">(${escapeHtml(periodLabel)})</span>`;
+  const dividends = series.reduce((s,x)=>s+x.dividends,0);
+  const interest = series.reduce((s,x)=>s+x.interest,0);
+  const bonus = series.reduce((s,x)=>s+x.bonus,0);
+  const total = dividends+interest+bonus;
+  const avgMonthly = series.length ? total/series.length : 0;
+  const lastMonthTotal = series.length ? (series[series.length-1].dividends+series[series.length-1].interest+series[series.length-1].bonus) : 0;
+  wrap.innerHTML = `
+    <div class="card stat-card"><div class="stat-label">Dividendos recebidos${suffix}</div><div class="stat-value">${fmtMoney(dividends)}</div></div>
+    <div class="card stat-card"><div class="stat-label">Juros recebidos${suffix}</div><div class="stat-value">${fmtMoney(interest)}</div></div>
+    <div class="card stat-card"><div class="stat-label">Bónus recebidos${suffix} <span class="tooltip-i" data-tip="Bónus dados pela plataforma/ativo (ex: referência, boas-vindas) — não é dinheiro seu, por isso conta como rendimento mas nunca como capital investido.">i</span></div><div class="stat-value">${fmtMoney(bonus)}</div></div>
+    <div class="card stat-card"><div class="stat-label">${isFullRange ? 'Total mensal (atual)' : 'Total do período'}</div><div class="stat-value">${fmtMoney(isFullRange ? lastMonthTotal : total)}</div></div>
+    <div class="card stat-card"><div class="stat-label">Média mensal${suffix}</div><div class="stat-value">${fmtMoney(avgMonthly)}</div></div>
+  `;
+}
+function drawIncomeChart(){
+  destroyChart('income');
+  const series = seriesForIncomeRange(INCOME_CHART_RANGE);
+  const c = chartColors();
+  const ctx = document.getElementById('chartIncome');
+  if(!ctx) return;
+  if(!series.length){ ctx.parentElement.innerHTML = emptyChartHTML('Sem rendimentos neste período.'); return; }
+  CHART_REGISTRY['income'] = safeMakeChart(ctx, {
+    type:'bar',
+    data:{ labels: series.map(s=>s.label), datasets:[
+      {label:'Dividendos', data: series.map(s=>s.dividends), backgroundColor:c.palette[1], borderRadius:4},
+      {label:'Juros', data: series.map(s=>s.interest), backgroundColor:c.palette[2], borderRadius:4},
+      {label:'Bónus', data: series.map(s=>s.bonus), backgroundColor:c.palette[4], borderRadius:4},
+    ]},
+    options: baseChartOptions(c, {currency:true})
+  });
+}
+function renderCalendar(){
+  const monthNames = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
+  document.getElementById('calLabel').textContent = `${monthNames[CAL_MONTH]} ${CAL_YEAR}`;
+  const first = new Date(CAL_YEAR, CAL_MONTH, 1);
+  const startOffset = (first.getDay()+6)%7; // segunda=0
+  const daysInMonth = new Date(CAL_YEAR, CAL_MONTH+1, 0).getDate();
+  const events = {};
+  STATE.movements.forEach(m=>{
+    if((m.type==='Dividendo'||m.type==='Juro'||m.type===BONUS_TYPE) && m.date.startsWith(`${CAL_YEAR}-${String(CAL_MONTH+1).padStart(2,'0')}`)){
+      const day = parseInt(m.date.slice(8,10));
+      events[day] = events[day] || [];
+      events[day].push(m);
+    }
+  });
+  STATE.assets.filter(a=>a.classId==='deposito' && a.extra && a.extra.dataVencimento && a.extra.dataVencimento.startsWith(`${CAL_YEAR}-${String(CAL_MONTH+1).padStart(2,'0')}`)).forEach(a=>{
+    const day = parseInt(a.extra.dataVencimento.slice(8,10));
+    events[day] = events[day] || [];
+    events[day].push({type:'Vencimento', value:0, notes:a.name});
+  });
+  const grid = document.getElementById('calGrid');
+  let html = '';
+  for(let i=0;i<startOffset;i++) html += `<div class="calendar-cell empty"></div>`;
+  const todayStr = todayISO();
+  for(let d=1; d<=daysInMonth; d++){
+    const iso = `${CAL_YEAR}-${String(CAL_MONTH+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+    const evs = events[d] || [];
+    html += `<div class="calendar-cell ${iso===todayStr?'today':''}" ${evs.length?`data-day="${d}"`:''}>
+      <div class="day-num">${d}</div>
+      ${evs.slice(0,3).map(e=>{
+        const dotColor = e.type==='Dividendo'?'#1E4FA0':e.type==='Juro'?'#0E6E5C':e.type==='Bónus'?'#9A5B10':e.type==='Vencimento'?'#B5811F':'#5B6472';
+        return `<div style="font-size:10px;margin-top:1px;"><span class="cal-dot" style="background:${dotColor}"></span>${e.type}</div>`;
+      }).join('')}
+    </div>`;
+  }
+  grid.innerHTML = html;
+  grid.querySelectorAll('[data-day]').forEach(cell=>{
+    cell.onclick = ()=>{
+      const day = cell.dataset.day;
+      const evs = events[day] || [];
+      openModal(`<div class="modal-header"><h3>${day} de ${['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'][CAL_MONTH]}</h3><button class="modal-close">${icon('x',18)}</button></div>
+      <div class="modal-body">${evs.map(e=>`<div class="alert-item ${e.type==='Vencimento'?'warn':''}">${e.type}${e.value?': '+fmtMoney(e.value):''} ${e.notes?'— '+escapeHtml(e.notes):''}</div>`).join('')}</div>
+      <div class="modal-footer"><button class="btn" id="calClose">Fechar</button></div>`);
+      document.getElementById('calClose').onclick = closeModal;
+    };
+  });
+}
+
+/* ---------------------------------------------------------------------
+   17. PÁGINA: DIVERSIFICAÇÃO
+   --------------------------------------------------------------------- */
+function renderDiversificacao(root){
+  const classBreak = computeClassBreakdown().filter(c=>c.current>0.004);
+  const assetMetrics = computeAllAssetMetrics().filter(m=>m.currentValue>0.004).sort((a,b)=>b.currentValue-a.currentValue);
+  const total = assetMetrics.reduce((s,m)=>s+m.currentValue,0);
+  const instBreak = computeInstitutionBreakdown();
+  const curBreak = computeCurrencyBreakdown();
+  const top3 = assetMetrics.slice(0,3).reduce((s,m)=>s+m.currentValue,0);
+  const concentration = total>0 ? (top3/total)*100 : 0;
+
+  root.innerHTML = `
+    <div class="grid grid-2" style="margin-bottom:14px;">
+      <div class="card"><div class="card-header-row"><h2>Por classe</h2></div><div class="chart-box"><canvas id="chartDivClass"></canvas></div></div>
+      <div class="card"><div class="card-header-row"><h2>Por ativo (top 10)</h2></div><div class="chart-box"><canvas id="chartDivAsset"></canvas></div></div>
+    </div>
+    <div class="grid grid-2" style="margin-bottom:14px;">
+      <div class="card"><div class="card-header-row"><h2>Por instituição</h2></div><div class="chart-box"><canvas id="chartDivInst"></canvas></div></div>
+      <div class="card"><div class="card-header-row"><h2>Por moeda</h2></div><div class="chart-box"><canvas id="chartDivCur"></canvas></div></div>
+    </div>
+    <div class="card">
+      <div class="card-title">Concentração nos 3 maiores ativos <span class="tooltip-i" data-tip="Indicador estatístico simples — quanto maior, mais dependente está o património de poucos ativos. Não é uma recomendação, apenas informação.">i</span></div>
+      <div style="display:flex;align-items:center;gap:14px;margin-top:8px;">
+        <div style="flex:1;"><div class="progress-bar"><div style="width:${clamp(concentration,0,100)}%;background:${concentration>60?'var(--negative)':concentration>35?'var(--warning)':'var(--positive)'}"></div></div></div>
+        <strong class="num" style="font-size:16px;">${concentration.toFixed(1)}%</strong>
+      </div>
+      <div class="table-wrap" style="margin-top:16px;">
+        <table><thead><tr><th>Ativo</th><th>Classe</th><th class="num">Valor</th><th class="num">Peso</th></tr></thead>
+        <tbody>${assetMetrics.slice(0,10).map(m=>`<tr><td>${escapeHtml(m.asset.name)}</td><td>${badgeForClass(m.asset.classId)}</td><td class="num">${fmtMoney(m.currentValue)}</td><td class="num">${total>0?((m.currentValue/total)*100).toFixed(1):0}%</td></tr>`).join('')}</tbody></table>
+      </div>
+    </div>
+  `;
+  const c = chartColors();
+  destroyChart('divClass');
+  CHART_REGISTRY['divClass'] = safeMakeChart(document.getElementById('chartDivClass'), {
+    type:'doughnut', data:{ labels: classBreak.map(b=>b.name), datasets:[{data:classBreak.map(b=>b.current), backgroundColor:classBreak.map((b,i)=>c.palette[i%c.palette.length]), borderWidth:2, borderColor:cssVar('--bg-elevated')}]},
+    options:{responsive:true, maintainAspectRatio:false, plugins:{legend:{position:'bottom',labels:{color:c.inkSoft,boxWidth:10}}}}
+  });
+  destroyChart('divAsset');
+  const topAssets = assetMetrics.slice(0,10);
+  CHART_REGISTRY['divAsset'] = safeMakeChart(document.getElementById('chartDivAsset'), {
+    type:'bar', data:{ labels: topAssets.map(m=>m.asset.name), datasets:[{label:'Valor', data:topAssets.map(m=>m.currentValue), backgroundColor:c.palette, borderRadius:5}]},
+    options: Object.assign(baseChartOptions(c,{currency:true}), {indexAxis:'y', plugins:{legend:{display:false}}})
+  });
+  destroyChart('divInst');
+  CHART_REGISTRY['divInst'] = safeMakeChart(document.getElementById('chartDivInst'), {
+    type:'doughnut', data:{ labels: instBreak.map(b=>b.name), datasets:[{data:instBreak.map(b=>b.current), backgroundColor:instBreak.map((b,i)=>c.palette[i%c.palette.length]), borderWidth:2, borderColor:cssVar('--bg-elevated')}]},
+    options:{responsive:true, maintainAspectRatio:false, plugins:{legend:{position:'bottom',labels:{color:c.inkSoft,boxWidth:10}}}}
+  });
+  destroyChart('divCur');
+  CHART_REGISTRY['divCur'] = safeMakeChart(document.getElementById('chartDivCur'), {
+    type:'doughnut', data:{ labels: curBreak.map(b=>b.name), datasets:[{data:curBreak.map(b=>b.current), backgroundColor:curBreak.map((b,i)=>c.palette[i%c.palette.length]), borderWidth:2, borderColor:cssVar('--bg-elevated')}]},
+    options:{responsive:true, maintainAspectRatio:false, plugins:{legend:{position:'bottom',labels:{color:c.inkSoft,boxWidth:10}}}}
+  });
+}
+
+/* ---------------------------------------------------------------------
+   18. PÁGINA: OBJETIVOS
+   --------------------------------------------------------------------- */
+function renderObjetivos(root){
+  const summary = computePortfolioSummary();
+  const series = computeMonthlySeries();
+  const currentMonthlyIncome = series.length ? series[series.length-1].dividends + series[series.length-1].interest : 0;
+
+  root.innerHTML = `
+    <div class="card" style="margin-bottom:14px;">
+      <div class="card-header-row"><h2>Objetivos financeiros</h2><button class="btn btn-primary btn-sm" id="addGoalBtn">${icon('plus',14)} Novo objetivo</button></div>
+      <div id="goalsWrap" class="grid grid-2"></div>
+    </div>
+    <div class="card">
+      <div class="card-header-row"><h2>Reforços mensais</h2><button class="btn btn-primary btn-sm" id="addReinforceBtn">${icon('plus',14)} Registar reforço</button></div>
+      <div class="kv-list" style="margin-bottom:14px;">
+        <div class="kv-row"><span class="k">Meta mensal definida</span><span class="v">${fmtMoney(STATE.settings.monthlyGoal)}</span></div>
+        <div class="kv-row"><span class="k">Reforço deste mês</span><span class="v">${fmtMoney(currentMonthReinforcement())}</span></div>
+      </div>
+      <div class="table-wrap"><table><thead><tr><th>Mês</th><th class="num">Meta</th><th class="num">Investido</th><th class="num">Cumprimento</th></tr></thead>
+        <tbody>${computeMonthlySeries().slice(-12).map(s=>{
+          const pct = STATE.settings.monthlyGoal>0 ? (s.invested>0 ? Math.min(200,(reinforcementForMonth(s.month)/STATE.settings.monthlyGoal)*100) : 0) : 0;
+          return `<tr><td>${s.label}</td><td class="num">${fmtMoney(STATE.settings.monthlyGoal)}</td><td class="num">${fmtMoney(reinforcementForMonth(s.month))}</td><td class="num ${pct>=100?'pos':''}">${pct.toFixed(0)}%</td></tr>`;
+        }).join('')}</tbody></table></div>
+    </div>
+  `;
+  document.getElementById('addGoalBtn').onclick = ()=> openGoalModal();
+  document.getElementById('addReinforceBtn').onclick = ()=> openMovementModal(null, {type:'Reforço'});
+  renderGoalsGrid(summary, currentMonthlyIncome);
+}
+function reinforcementForMonth(mk){
+  return STATE.movements.filter(m=>CONTRIB_TYPES.includes(m.type) && monthKey(m.date)===mk).reduce((s,m)=>s+num(m.value),0);
+}
+function currentMonthReinforcement(){ return reinforcementForMonth(monthKey(todayISO())); }
+function renderGoalsGrid(summary, currentMonthlyIncome){
+  const wrap = document.getElementById('goalsWrap');
+  if(!STATE.goals.length){
+    wrap.innerHTML = `<div class="empty-state" style="grid-column:1/-1;"><div class="icon">🎯</div><h4>Ainda não definiu objetivos</h4><p>Crie metas como "chegar aos €10.000" ou "receber €100/mês em rendimentos".</p></div>`;
+    return;
+  }
+  wrap.innerHTML = STATE.goals.map(g=>{
+    const current = g.type==='patrimonio' ? summary.totalCurrent : currentMonthlyIncome;
+    const pct = g.target>0 ? clamp((current/g.target)*100,0,100) : 0;
+    const remaining = Math.max(0, g.target-current);
+    return `<div class="card">
+      <div class="card-header-row"><h2 style="font-size:14px;">${escapeHtml(g.name)}</h2>
+        <div><button class="btn btn-sm btn-icon" data-edit-goal="${g.id}">${icon('edit',13)}</button><button class="btn btn-sm btn-icon" data-del-goal="${g.id}">${icon('trash',13)}</button></div>
+      </div>
+      <div class="kv-list">
+        <div class="kv-row"><span class="k">Valor atual</span><span class="v">${g.type==='patrimonio'?fmtMoney(current):fmtMoney(current)+'/mês'}</span></div>
+        <div class="kv-row"><span class="k">Objetivo</span><span class="v">${g.type==='patrimonio'?fmtMoney(g.target):fmtMoney(g.target)+'/mês'}</span></div>
+        <div class="kv-row"><span class="k">Falta</span><span class="v">${fmtMoney(remaining)}</span></div>
+      </div>
+      <div style="margin-top:10px;"><div class="progress-bar"><div style="width:${pct}%;"></div></div>
+      <div style="text-align:right;font-size:12px;margin-top:4px;font-weight:600;color:var(--accent);">${pct.toFixed(1)}%</div></div>
+    </div>`;
+  }).join('');
+  wrap.querySelectorAll('[data-edit-goal]').forEach(b=> b.onclick = ()=> openGoalModal(STATE.goals.find(g=>g.id===b.dataset.editGoal)));
+  wrap.querySelectorAll('[data-del-goal]').forEach(b=> b.onclick = ()=>{
+    confirmDialog('Eliminar objetivo','Tem a certeza que quer eliminar este objetivo?', ()=>{
+      STATE.goals = STATE.goals.filter(g=>g.id!==b.dataset.delGoal); saveState(); navigate('objetivos');
+    }, true);
+  });
+}
+function openGoalModal(existing){
+  const isEdit = !!existing;
+  const g = existing || {id:null, name:'', type:'patrimonio', target:1000};
+  openModal(`
+    <div class="modal-header"><h3>${isEdit?'Editar':'Novo'} objetivo</h3><button class="modal-close">${icon('x',18)}</button></div>
+    <div class="modal-body">
+      <div class="form-grid single">
+        <div class="field"><label>Nome do objetivo *</label><input type="text" id="gfName" value="${escapeHtml(g.name)}" placeholder="Ex: Chegar aos €25.000"></div>
+        <div class="field"><label>Tipo de objetivo</label>
+          <select id="gfType">
+            <option value="patrimonio" ${g.type==='patrimonio'?'selected':''}>Valor de património total</option>
+            <option value="income_monthly" ${g.type==='income_monthly'?'selected':''}>Rendimento mensal (juros + dividendos)</option>
+          </select>
+        </div>
+        <div class="field"><label>Valor objetivo (€) *</label><input type="number" step="0.01" class="num-input" id="gfTarget" value="${g.target}"></div>
+      </div>
+    </div>
+    <div class="modal-footer"><button class="btn" id="gfCancel">Cancelar</button><button class="btn btn-primary" id="gfSave">Guardar</button></div>`);
+  document.getElementById('gfCancel').onclick = closeModal;
+  document.getElementById('gfSave').onclick = ()=>{
+    const name = document.getElementById('gfName').value.trim();
+    if(!name){ toast('Indique um nome para o objetivo.','err'); return; }
+    const payload = { name, type:document.getElementById('gfType').value, target:num(document.getElementById('gfTarget').value) };
+    if(isEdit) Object.assign(existing, payload); else STATE.goals.push(Object.assign({id:uid('goal')}, payload));
+    saveState(); closeModal(); toast('Objetivo guardado.','ok'); navigate('objetivos');
+  };
+}
+
+/* ---------------------------------------------------------------------
+   19. PÁGINA: GERIR ATIVOS
+   --------------------------------------------------------------------- */
+let MANAGE_TAB = 'etf';
+function renderGerirAtivos(root){
+  root.innerHTML = `
+    <div class="card">
+      <div class="tabs" id="manageTabs">
+        ${STATE.classes.map(c=>`<button class="tab-btn ${c.id===MANAGE_TAB?'active':''}" data-tab="${c.id}">${escapeHtml(c.name)}</button>`).join('')}
+        <button class="tab-btn" id="addCategoryTab">${icon('plus',13)} Nova categoria</button>
+      </div>
+      <div class="card-header-row">
+        <h2 id="manageTitle"></h2>
+        <div style="display:flex;gap:8px;">
+          ${classById(MANAGE_TAB) && !classById(MANAGE_TAB).system ? `<button class="btn btn-sm btn-danger" id="delCategoryBtn">${icon('trash',14)} Eliminar categoria</button>` : ''}
+          <button class="btn btn-primary btn-sm" id="manageAddBtn">${icon('plus',14)} Adicionar</button>
+        </div>
+      </div>
+      <div id="manageTableWrap"></div>
+    </div>`;
+  document.getElementById('manageTitle').textContent = (classById(MANAGE_TAB)||{}).name || MANAGE_TAB;
+  document.querySelectorAll('#manageTabs [data-tab]').forEach(btn=> btn.onclick = ()=>{ MANAGE_TAB = btn.dataset.tab; renderGerirAtivos(root); });
+  document.getElementById('addCategoryTab').onclick = openCategoryModal;
+  document.getElementById('manageAddBtn').onclick = ()=> openAssetModal(null, MANAGE_TAB);
+  const delBtn = document.getElementById('delCategoryBtn');
+  if(delBtn) delBtn.onclick = ()=>{
+    const hasAssets = STATE.assets.some(a=>a.classId===MANAGE_TAB);
+    confirmDialog('Eliminar categoria', hasAssets ? 'Esta categoria tem ativos associados. Elimine ou mova esses ativos antes de remover a categoria.' : 'Tem a certeza que quer eliminar esta categoria?', ()=>{
+      if(hasAssets){ toast('Não é possível eliminar: existem ativos nesta categoria.','err'); return; }
+      STATE.classes = STATE.classes.filter(c=>c.id!==MANAGE_TAB);
+      MANAGE_TAB = STATE.classes[0].id; saveState(); navigate('gerir-ativos');
+    }, true);
+  };
+  const metrics = computeAllAssetMetrics().filter(m=>m.asset.classId===MANAGE_TAB);
+  renderAssetTable(document.getElementById('manageTableWrap'), metrics, MANAGE_TAB);
+}
+function openCategoryModal(){
+  openModal(`
+    <div class="modal-header"><h3>Nova categoria de investimento</h3><button class="modal-close">${icon('x',18)}</button></div>
+    <div class="modal-body">
+      <div class="field"><label>Nome da categoria *</label><input type="text" id="catName" placeholder="Ex: Criptomoedas"></div>
+      <div class="field" style="margin-top:10px;"><label>Cor identificativa</label><input type="text" id="catColor" value="#5B6472" placeholder="#RRGGBB"></div>
+    </div>
+    <div class="modal-footer"><button class="btn" id="catCancel">Cancelar</button><button class="btn btn-primary" id="catSave">Criar categoria</button></div>`);
+  document.getElementById('catCancel').onclick = closeModal;
+  document.getElementById('catSave').onclick = ()=>{
+    const name = document.getElementById('catName').value.trim();
+    if(!name){ toast('Indique um nome.','err'); return; }
+    const id = uid('class');
+    STATE.classes.push({id, name, color: document.getElementById('catColor').value || '#5B6472', system:false});
+    saveState(); closeModal(); toast('Categoria criada.','ok'); MANAGE_TAB = id; navigate('gerir-ativos');
+  };
+}
+
+/* ---------------------------------------------------------------------
+   20. PÁGINA: DEFINIÇÕES
+   --------------------------------------------------------------------- */
+function renderDefinicoes(root){
+  root.innerHTML = `
+    <div class="grid grid-2" style="margin-bottom:14px;">
+      <div class="card">
+        <div class="card-title">Geral</div>
+        <div class="form-grid single">
+          <div class="field"><label>Nome do portfólio</label><input type="text" id="setName" value="${escapeHtml(STATE.settings.portfolioName)}"></div>
+          <div class="field"><label>Moeda principal</label>
+            <select id="setCurrency">${Object.keys(CURRENCY_SYMBOLS).map(c=>`<option value="${c}" ${c===STATE.settings.baseCurrency?'selected':''}>${c}</option>`).join('')}</select>
+          </div>
+          <div class="field checkbox-row"><input type="checkbox" id="setDark" ${STATE.settings.theme==='dark'?'checked':''}><label for="setDark" style="margin:0;">Tema escuro (Dark Mode)</label></div>
+          <div class="field"><label>Meta mensal de investimento (€)</label><input type="number" step="0.01" class="num-input" id="setMonthlyGoal" value="${STATE.settings.monthlyGoal}"></div>
+          <div class="field"><label>Limite de concentração por ativo (%) <span class="tooltip-i" data-tip="Usado no alerta de concentração de ativos.">i</span></label><input type="number" step="1" class="num-input" id="setConcAsset" value="${STATE.settings.concentrationLimit}"></div>
+          <div class="field"><label>Limite de concentração por classe (%)</label><input type="number" step="1" class="num-input" id="setConcClass" value="${STATE.settings.classConcentrationLimit}"></div>
+        </div>
+        <div style="margin-top:14px;"><button class="btn btn-primary" id="saveSettingsBtn">Guardar definições</button></div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Taxas de câmbio (manuais) <span class="tooltip-i" data-tip="Quanto vale 1 EUR nesta moeda. Não são obtidas cotações em tempo real — atualize manualmente quando necessário.">i</span></div>
+        <div id="ratesWrap" class="form-grid single"></div>
+        <div style="margin-top:14px;"><button class="btn btn-primary" id="saveRatesBtn">Guardar taxas</button></div>
+      </div>
+    </div>
+
+    <div class="grid grid-2" style="margin-bottom:14px;">
+      <div class="card">
+        <div class="card-title">Alertas configuráveis</div>
+        <div id="alertsConfigWrap"></div>
+      </div>
+      <div class="card">
+        <div class="card-title">Benchmarks (valores manuais) <span class="tooltip-i" data-tip="Introduza o valor de fecho mensal do índice. Usado apenas para comparação relativa (indexado a 100) — não é necessário obter cotações em tempo real.">i</span></div>
+        <div class="tabs">
+          <button class="tab-btn active" data-bench-tab="SP500">S&amp;P 500</button>
+          <button class="tab-btn" data-bench-tab="MSCIWorld">MSCI World</button>
+        </div>
+        <div id="benchWrap"></div>
+        <div style="display:flex;gap:8px;margin-top:10px;">
+          <input type="text" id="benchMonth" placeholder="YYYY-MM" style="width:110px;">
+          <input type="number" step="0.01" class="num-input" id="benchValue" placeholder="Valor" style="width:110px;">
+          <button class="btn btn-sm btn-primary" id="benchAdd">${icon('plus',13)} Adicionar</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">Dados e privacidade</div>
+      <p class="muted" style="font-size:12.5px;margin:0 0 14px;">Todos os dados deste portfólio ficam guardados apenas neste browser (localStorage). Nada é enviado para qualquer servidor.</p>
+      <div style="display:flex;flex-wrap:wrap;gap:10px;">
+        <button class="btn" id="exportJsonBtn">${icon('download',15)} Exportar JSON (backup)</button>
+        <button class="btn" id="exportAllCsvBtn">${icon('download',15)} Exportar tudo em CSV</button>
+        <button class="btn" id="importJsonBtn">${icon('upload',15)} Importar backup (JSON)</button>
+        <input type="file" id="importFileInput" accept="application/json" style="display:none;">
+        <button class="btn" id="restoreDemoBtn">Restaurar dados de demonstração</button>
+        <button class="btn btn-danger" id="clearAllBtn">${icon('trash',15)} Limpar todos os dados</button>
+      </div>
+    </div>
+  `;
+
+  document.getElementById('saveSettingsBtn').onclick = ()=>{
+    STATE.settings.portfolioName = document.getElementById('setName').value.trim() || 'O Meu Portfólio';
+    STATE.settings.baseCurrency = document.getElementById('setCurrency').value;
+    STATE.settings.theme = document.getElementById('setDark').checked ? 'dark' : 'light';
+    STATE.settings.monthlyGoal = num(document.getElementById('setMonthlyGoal').value);
+    STATE.settings.concentrationLimit = num(document.getElementById('setConcAsset').value);
+    STATE.settings.classConcentrationLimit = num(document.getElementById('setConcClass').value);
+    applyTheme(); updateThemeIcon(); saveState(); toast('Definições guardadas.','ok'); navigate('definicoes');
+  };
+
+  const ratesWrap = document.getElementById('ratesWrap');
+  ratesWrap.innerHTML = Object.keys(CURRENCY_SYMBOLS).map(c=>`
+    <div class="field"><label>1 EUR = ? ${c}</label><input type="number" step="0.0001" class="num-input rate-input" data-cur="${c}" value="${STATE.settings.exchangeRates[c]}" ${c==='EUR'?'disabled':''}></div>
+  `).join('');
+  document.getElementById('saveRatesBtn').onclick = ()=>{
+    document.querySelectorAll('.rate-input').forEach(inp=>{ STATE.settings.exchangeRates[inp.dataset.cur] = num(inp.value) || STATE.settings.exchangeRates[inp.dataset.cur]; });
+    STATE.settings.exchangeRates.EUR = 1;
+    saveState(); toast('Taxas de câmbio guardadas.','ok');
+  };
+
+  renderAlertsConfig();
+
+  let benchTab = 'SP500';
+  function renderBenchList(){
+    const list = (STATE.benchmarks[benchTab]||[]).slice().sort((a,b)=>a.month.localeCompare(b.month));
+    document.getElementById('benchWrap').innerHTML = list.length ? `
+      <div class="table-wrap" style="max-height:180px;overflow-y:auto;"><table><thead><tr><th>Mês</th><th class="num">Valor</th><th></th></tr></thead>
+      <tbody>${list.map(v=>`<tr><td>${v.month}</td><td class="num">${fmtNumber(v.value)}</td><td><button class="btn btn-sm btn-icon" data-del-bench="${v.month}">${icon('trash',13)}</button></td></tr>`).join('')}</tbody></table></div>`
+      : `<p class="muted" style="font-size:12.5px;">Sem valores introduzidos.</p>`;
+    document.querySelectorAll('[data-del-bench]').forEach(b=> b.onclick = ()=>{
+      STATE.benchmarks[benchTab] = STATE.benchmarks[benchTab].filter(v=>v.month!==b.dataset.delBench);
+      saveState(); renderBenchList();
+    });
+  }
+  document.querySelectorAll('[data-bench-tab]').forEach(btn=> btn.onclick = ()=>{
+    document.querySelectorAll('[data-bench-tab]').forEach(b=>b.classList.remove('active')); btn.classList.add('active');
+    benchTab = btn.dataset.benchTab; renderBenchList();
+  });
+  document.getElementById('benchAdd').onclick = ()=>{
+    const mk = document.getElementById('benchMonth').value.trim();
+    const val = num(document.getElementById('benchValue').value);
+    if(!/^\d{4}-\d{2}$/.test(mk)){ toast('Use o formato AAAA-MM.','err'); return; }
+    STATE.benchmarks[benchTab] = (STATE.benchmarks[benchTab]||[]).filter(v=>v.month!==mk).concat([{month:mk, value:val}]);
+    saveState(); toast('Valor adicionado.','ok'); renderBenchList();
+    document.getElementById('benchMonth').value=''; document.getElementById('benchValue').value='';
+  };
+  renderBenchList();
+
+  document.getElementById('exportJsonBtn').onclick = ()=>{
+    const blob = new Blob([JSON.stringify(STATE,null,2)], {type:'application/json'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a'); a.href=url; a.download=`portfolio-backup-${todayISO()}.json`; document.body.appendChild(a); a.click(); a.remove();
+    URL.revokeObjectURL(url); toast('Backup exportado.','ok');
+  };
+  document.getElementById('exportAllCsvBtn').onclick = ()=>{ exportAssetsCsv();
+    setTimeout(()=>{
+      const rows = [['Data','Tipo','Classe','Ativo','Instituicao','Quantidade','Preco','Valor','Comissao','Moeda','Observacoes']];
+      STATE.movements.forEach(m=> rows.push([m.date,m.type,(classById(m.classId)||{}).name||m.classId,(assetById(m.assetId)||{}).name||'',m.institution||'',m.quantity||0,m.price||0,m.value||0,m.commission||0,m.currency,m.notes||'']));
+      downloadCsv(rows, 'movimentos.csv');
+    }, 400);
+  };
+  document.getElementById('importJsonBtn').onclick = ()=> document.getElementById('importFileInput').click();
+  document.getElementById('importFileInput').onchange = handleImportFile;
+  document.getElementById('restoreDemoBtn').onclick = ()=>{
+    confirmDialog('Restaurar dados de demonstração','Isto substitui os dados atuais por dados fictícios de demonstração. Recomendamos exportar um backup antes. Quer continuar?', ()=>{
+      STATE = buildDemoState(); saveState(); toast('Dados de demonstração restaurados.','ok'); navigate('dashboard');
+    });
+  };
+  document.getElementById('clearAllBtn').onclick = ()=>{
+    confirmDialog('Limpar todos os dados','Esta ação apaga permanentemente todos os ativos, movimentos, objetivos e definições guardadas neste dispositivo. Não pode ser desfeita. Tem a certeza?', ()=>{
+      STATE = emptyState(); STATE.isDemo = false; saveState(); toast('Todos os dados foram apagados.','ok'); navigate('dashboard');
+    }, true);
+  };
+}
+function renderAlertsConfig(){
+  const wrap = document.getElementById('alertsConfigWrap');
+  wrap.innerHTML = STATE.alerts.map(a=>`
+    <div class="field" style="border-bottom:1px dashed var(--border);padding-bottom:10px;margin-bottom:10px;">
+      <div class="checkbox-row" style="justify-content:space-between;">
+        <label style="margin:0;font-weight:600;"><input type="checkbox" data-alert-active="${a.id}" ${a.active?'checked':''}> ${escapeHtml(a.label)}</label>
+        ${a.type!=='negative_return' ? `<input type="number" step="1" class="num-input" data-alert-threshold="${a.id}" value="${a.threshold}" style="width:70px;padding:5px 8px;">` : ''}
+      </div>
+    </div>`).join('');
+  wrap.querySelectorAll('[data-alert-active]').forEach(cb=> cb.onchange = ()=>{
+    STATE.alerts.find(a=>a.id===cb.dataset.alertActive).active = cb.checked; saveState();
+  });
+  wrap.querySelectorAll('[data-alert-threshold]').forEach(inp=> inp.onchange = ()=>{
+    STATE.alerts.find(a=>a.id===inp.dataset.alertThreshold).threshold = num(inp.value); saveState();
+  });
+}
+function handleImportFile(e){
+  const file = e.target.files[0];
+  if(!file) return;
+  const reader = new FileReader();
+  reader.onload = (ev)=>{
+    let data;
+    try{ data = JSON.parse(ev.target.result); }
+    catch(err){ toast('Ficheiro inválido. Certifique-se que é um backup JSON exportado por esta aplicação.','err'); return; }
+    if(!data || !Array.isArray(data.assets) || !Array.isArray(data.movements)){
+      toast('Estrutura de dados não reconhecida.','err'); return;
+    }
+    openModal(`
+      <div class="modal-header"><h3>Importar backup</h3><button class="modal-close">${icon('x',18)}</button></div>
+      <div class="modal-body">
+        <p style="font-size:13.5px;">Encontrámos ${data.assets.length} ativo(s) e ${data.movements.length} movimento(s) neste ficheiro. Como pretende importar?</p>
+      </div>
+      <div class="modal-footer">
+        <button class="btn" id="impCancel">Cancelar</button>
+        <button class="btn" id="impMerge">Adicionar aos dados existentes</button>
+        <button class="btn btn-danger" id="impReplace">Substituir dados existentes</button>
+      </div>`);
+    document.getElementById('impCancel').onclick = closeModal;
+    document.getElementById('impReplace').onclick = ()=>{
+      STATE = Object.assign(emptyState(), data); STATE.isDemo=false; sanitizeState(); saveState(); closeModal(); toast('Dados importados (substituídos).','ok'); navigate('dashboard');
+    };
+    document.getElementById('impMerge').onclick = ()=>{
+      const idMap = {};
+      (data.classes||[]).forEach(c=>{ if(!STATE.classes.some(ec=>ec.id===c.id)) STATE.classes.push(c); });
+      (data.assets||[]).forEach(a=>{ const newId=uid('asset'); idMap[a.id]=newId; STATE.assets.push(Object.assign({},a,{id:newId})); });
+      (data.movements||[]).forEach(m=> STATE.movements.push(Object.assign({},m,{id:uid('mv'), assetId: idMap[m.assetId]||m.assetId})));
+      (data.valuations||[]).forEach(v=> STATE.valuations.push(Object.assign({},v,{id:uid('val'), assetId: idMap[v.assetId]||v.assetId})));
+      (data.goals||[]).forEach(g=> STATE.goals.push(Object.assign({},g,{id:uid('goal')})));
+      STATE.isDemo=false; sanitizeState(); saveState(); closeModal(); toast('Dados importados (adicionados).','ok'); navigate('dashboard');
+    };
+  };
+  reader.readAsText(file);
+  e.target.value = '';
+}
+
+/* ---------------------------------------------------------------------
+   21. MAPA DE PÁGINAS E ARRANQUE DA APLICAÇÃO
+   --------------------------------------------------------------------- */
+const PAGE_RENDERERS = {
+  'dashboard': renderDashboard,
+  'investimentos': renderInvestimentos,
+  'etfs': (root)=> renderClassPage(root,'etf'),
+  'p2p': (root)=> renderClassPage(root,'p2p'),
+  'ppr': (root)=> renderClassPage(root,'ppr'),
+  'depositos': (root)=> renderClassPage(root,'deposito'),
+  'movimentos': renderMovimentos,
+  'analise-mensal': renderAnaliseMensal,
+  'performance': renderPerformance,
+  'rendimentos': renderRendimentos,
+  'diversificacao': renderDiversificacao,
+  'objetivos': renderObjetivos,
+  'gerir-ativos': renderGerirAtivos,
+  'definicoes': renderDefinicoes,
+};
+
+function appendFooterNote(){
+  const content = document.getElementById('content');
+  if(!content) return;
+  const note = document.createElement('div');
+  note.className = 'footer-note';
+  note.innerHTML = `${icon('shield',12)} Os dados deste portfólio são armazenados localmente neste dispositivo.`;
+  content.appendChild(note);
+}
+const _origNavigate = navigate;
+navigate = function(page){ _origNavigate(page); appendFooterNote(); };
+
+function initApp(){
+  try{
+    loadState();
+    applyTheme();
+    renderShell();
+    const hashPage = location.hash.replace('#','');
+    const startPage = PAGE_RENDERERS[hashPage] ? hashPage : 'dashboard';
+    navigate(startPage);
+    window.addEventListener('hashchange', ()=>{
+      const p = location.hash.replace('#','');
+      if(PAGE_RENDERERS[p] && p !== CURRENT_PAGE) navigate(p);
+    });
+    window.addEventListener('resize', ()=>{
+      if(window.innerWidth > 900){
+        document.getElementById('sidebar').classList.remove('open');
+        document.getElementById('sidebarScrim').classList.remove('open');
+      }
+    });
+  }catch(err){
+    console.error('Falha crítica ao iniciar a aplicação:', err);
+    document.getElementById('app').innerHTML = `
+      <div style="max-width:560px;margin:8vh auto;padding:0 20px;font-family:system-ui,sans-serif;">
+        <div style="background:#fff;border:1px solid #E2E5EA;border-radius:14px;padding:28px;text-align:center;">
+          <div style="font-size:32px;margin-bottom:10px;">⚠️</div>
+          <h2 style="margin:0 0 8px;font-size:18px;">A aplicação não conseguiu iniciar</h2>
+          <p style="color:#4B5567;font-size:13.5px;line-height:1.6;">
+            Isto acontece normalmente se o ficheiro Chart.js não conseguiu ser carregado a partir do CDN
+            (por exemplo, sem ligação à internet no momento da abertura). Verifique a sua ligação e recarregue a página.
+          </p>
+          <p style="font-family:ui-monospace,monospace;font-size:11.5px;color:#B5432F;background:#FBEAE6;padding:10px;border-radius:8px;margin-top:14px;text-align:left;">${escapeHtml(err.message)}</p>
+          <button onclick="location.reload()" style="margin-top:16px;padding:9px 18px;border-radius:8px;border:1px solid #0E6E5C;background:#0E6E5C;color:#fff;font-weight:600;cursor:pointer;">Recarregar página</button>
+        </div>
+      </div>`;
+  }
+}
+
+document.addEventListener('DOMContentLoaded', initApp);
+
+// Registo do service worker (PWA): permite instalar a app e abrir offline depois da primeira
+// visita. Só funciona quando a página é servida via http(s) — não corre em file:// nem afeta
+// em nada o funcionamento normal da app caso falhe (é envolto em try/catch e feature-detect).
+if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) {
+  window.addEventListener('load', function () {
+    navigator.serviceWorker.register('sw.js').catch(function () { /* silencioso: app funciona na mesma */ });
+  });
+}
+</script>
+</body>
+</html>
