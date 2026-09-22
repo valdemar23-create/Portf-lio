@@ -1,0 +1,38 @@
+PORTFÓLIO FINANCEIRO — VERSÃO PWA (aplicação instalável)
+==========================================================
+
+Esta pasta contém a app pronta a instalar:
+- index.html   → a aplicação (o mesmo ficheiro de sempre, só com as etiquetas de PWA)
+- manifest.json → diz ao telemóvel/PC como instalar a app (nome, ícone, cores)
+- sw.js         → guarda a app em cache para poderes abri-la offline
+- icon-192.png / icon-512.png → ícones da app
+
+IMPORTANTE: para o "Adicionar ao ecrã principal" / "Instalar aplicação" funcionar por
+completo (com ícone, ecrã inteiro e modo offline), o browser precisa de aceder a estes
+ficheiros através de http(s) — nunca abrindo o ficheiro diretamente do disco (file://).
+Isto é uma regra de segurança de todos os browsers, não uma limitação desta app.
+
+A forma mais simples e gratuita de resolver isto é hospedar esta pasta no GitHub Pages:
+
+1. Cria uma conta gratuita em github.com (se ainda não tiveres).
+2. Cria um repositório novo, público, com o nome que quiseres (ex: "meu-portfolio").
+3. Faz upload dos 5 ficheiros desta pasta para esse repositório (arrastar e largar
+   funciona diretamente no site do GitHub, em "Add file" → "Upload files").
+4. Vai a Settings → Pages, escolhe a branch "main" e pasta "/ (root)", e grava.
+5. Ao fim de 1-2 minutos o GitHub dá-te um link do tipo:
+   https://o-teu-utilizador.github.io/meu-portfolio/
+6. Abre esse link no telemóvel (Safari no iPhone, Chrome no Android) e no PC:
+   - iPhone: Partilhar → Adicionar ao Ecrã Principal
+   - Android: menu (⋮) → Instalar aplicação (ou Chrome mostra um aviso automático)
+   - PC (Chrome/Edge): ícone de instalação na barra de endereço, ou menu → Instalar
+
+Repositório PÚBLICO no GitHub não é problema de privacidade: o código fica visível,
+mas os TEUS DADOS financeiros nunca são enviados para lá — continuam só no
+armazenamento local (localStorage) de cada dispositivo, exatamente como até agora.
+Se preferires mesmo assim, podes tornar o repositório privado e o GitHub Pages
+continua a funcionar em planos GitHub Pro, ou usar alternativas gratuitas como
+Netlify ou Vercel (arrastar a pasta para o site, sem precisar de conta GitHub).
+
+Sem hospedagem (abrindo o index.html diretamente com duplo clique), a app continua
+a funcionar perfeitamente como sempre — só não terá o botão de instalar nem o modo
+offline "verdadeiro" da PWA.
