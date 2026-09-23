@@ -2949,6 +2949,7 @@ function renderGerirAtivos(root){
         <h2 id="manageTitle"></h2>
         <div style="display:flex;gap:8px;">
           ${classById(MANAGE_TAB) && !classById(MANAGE_TAB).system ? `<button class="btn btn-sm" id="editCategoryBtn">${icon('edit',14)} Editar categoria</button><button class="btn btn-sm btn-danger" id="delCategoryBtn">${icon('trash',14)} Eliminar categoria</button>` : ''}
+          <button class="btn btn-sm" id="bulkPriceBtn">${icon('trend',14)} Atualizar preços</button>
           <button class="btn btn-primary btn-sm" id="manageAddBtn">${icon('plus',14)} Adicionar</button>
         </div>
       </div>
@@ -2957,6 +2958,7 @@ function renderGerirAtivos(root){
   document.getElementById('manageTitle').textContent = (classById(MANAGE_TAB)||{}).name || MANAGE_TAB;
   document.querySelectorAll('#manageTabs [data-tab]').forEach(btn=> btn.onclick = ()=>{ MANAGE_TAB = btn.dataset.tab; renderGerirAtivos(root); });
   document.getElementById('addCategoryTab').onclick = ()=> openCategoryModal();
+  document.getElementById('bulkPriceBtn').onclick = openBulkPriceModal;
   document.getElementById('manageAddBtn').onclick = ()=> openAssetModal(null, MANAGE_TAB);
   const editBtn = document.getElementById('editCategoryBtn');
   if(editBtn) editBtn.onclick = ()=> openCategoryModal(MANAGE_TAB);
@@ -3004,6 +3006,77 @@ function openCategoryModal(editId){
       STATE.classes.push({id, name, color, system:false, usesQty});
       saveState(); closeModal(); toast('Categoria criada.','ok'); MANAGE_TAB = id; navigate('gerir-ativos');
     }
+  };
+}
+
+/* Atualização de preços em massa: sem chaves de API nem ligação à internet dentro da app — o
+   utilizador cola manualmente pares "ticker preço" (copiados do Yahoo Finance, da corretora, etc.)
+   e a app associa cada linha ao ativo certo pelo campo Ticker, atualizando "Preço atual por unidade".
+   Só se aplica a ativos de categorias "Quantidade × preço" (usesQuantityFields), já que só esses têm
+   esse campo — nos de "Valor manual" o valor atual é sempre introduzido diretamente. */
+function openBulkPriceModal(){
+  openModal(`
+    <div class="modal-header"><h3>Atualizar preços em massa</h3><button class="modal-close">${icon('x',18)}</button></div>
+    <div class="modal-body">
+      <p style="font-size:13.5px;margin-bottom:10px;">Cole uma lista com o <strong>ticker</strong> e o <strong>preço atual</strong> de cada ativo, um por linha (ex: copiado do Yahoo Finance ou da corretora). Aceita espaço, vírgula, ponto e vírgula ou tabulação a separar os dois valores.</p>
+      <textarea id="bulkPriceInput" rows="7" placeholder="SXR8 120.59&#10;VWCE 95,20&#10;IWDA;75.10"></textarea>
+      <div id="bulkPricePreview" style="margin-top:14px;"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn" id="bulkPriceCancel">Cancelar</button>
+      <button class="btn" id="bulkPricePreviewBtn">Pré-visualizar</button>
+      <button class="btn btn-primary" id="bulkPriceApplyBtn" style="display:none;">Aplicar atualização</button>
+    </div>`);
+  document.getElementById('bulkPriceCancel').onclick = closeModal;
+  let matches = [];
+  document.getElementById('bulkPricePreviewBtn').onclick = ()=>{
+    const raw = document.getElementById('bulkPriceInput').value;
+    const lines = raw.split('\n').map(l=>l.trim()).filter(Boolean);
+    const candidates = STATE.assets.filter(a=>usesQuantityFields(a.classId) && a.ticker && a.ticker.trim());
+    matches = [];
+    const unmatched = [];
+    lines.forEach(line=>{
+      // Separa por espaço(s), tabulação ou ponto e vírgula — NUNCA por vírgula sozinha, porque a
+      // vírgula também é usada como separador decimal (ex: "95,20"). Só quando não há nenhum desses
+      // separadores (ex: "SXR8,120.59" tudo colado) é que se tenta a vírgula como separador de campos.
+      let parts = line.split(/[\t;]+|\s+/).filter(Boolean);
+      if(parts.length === 1){
+        const commaSplit = parts[0].split(',');
+        if(commaSplit.length === 2) parts = commaSplit;
+      }
+      if(parts.length < 2){ unmatched.push({line, reason:'Formato não reconhecido (esperado: ticker + preço)'}); return; }
+      const tickerRaw = parts[0];
+      const price = num(parts[parts.length-1]);
+      if(!price){ unmatched.push({line, reason:'Preço inválido ou em falta'}); return; }
+      const asset = candidates.find(a=>a.ticker.trim().toLowerCase()===tickerRaw.trim().toLowerCase());
+      if(!asset){ unmatched.push({line, reason:`Nenhum ativo com o ticker "${tickerRaw}"`}); return; }
+      if(matches.some(m=>m.asset.id===asset.id)){ unmatched.push({line, reason:`Ticker "${tickerRaw}" repetido — só a última linha é usada`}); }
+      matches = matches.filter(m=>m.asset.id!==asset.id);
+      matches.push({asset, price});
+    });
+    const previewEl = document.getElementById('bulkPricePreview');
+    let html = '';
+    if(matches.length){
+      html += `<div class="table-wrap"><table><thead><tr><th>Ativo</th><th>Ticker</th><th class="num">Preço atual</th><th class="num">Novo preço</th></tr></thead><tbody>`;
+      html += matches.map(m=>`<tr><td>${escapeHtml(m.asset.name)}</td><td>${escapeHtml(m.asset.ticker)}</td><td class="num">${m.asset.currentPrice?fmtMoney(m.asset.currentPrice,m.asset.currency):'—'}</td><td class="num" style="font-weight:700;color:var(--positive);">${fmtMoney(m.price,m.asset.currency)}</td></tr>`).join('');
+      html += `</tbody></table></div>`;
+    }
+    if(unmatched.length){
+      html += `<p style="margin-top:10px;font-size:12.5px;color:var(--negative);">${unmatched.length} linha(s) ignorada(s):</p><ul style="font-size:12.5px;color:var(--ink-faint);margin:4px 0 0 18px;">${unmatched.map(u=>`<li>"${escapeHtml(u.line)}" — ${u.reason}</li>`).join('')}</ul>`;
+    }
+    if(!matches.length && !unmatched.length){
+      html = `<p class="muted" style="font-size:13px;">Cole pelo menos uma linha para pré-visualizar.</p>`;
+    }
+    previewEl.innerHTML = html;
+    document.getElementById('bulkPriceApplyBtn').style.display = matches.length ? 'inline-flex' : 'none';
+  };
+  document.getElementById('bulkPriceApplyBtn').onclick = ()=>{
+    matches.forEach(m=>{ m.asset.currentPrice = m.price; });
+    const count = matches.length;
+    saveState();
+    closeModal();
+    toast(`${count} preço(s) atualizado(s).`, 'ok');
+    navigate(CURRENT_PAGE);
   };
 }
 
