@@ -8,7 +8,7 @@
 // nova do service worker e substituir a cache antiga — sem isto, alterar só o index.html pode
 // não chegar a quem já tem a app instalada, porque o browser continua a usar o service worker
 // (e a cache) antigos até reparar que este ficheiro mudou.
-const CACHE_NAME = 'portfolio-financeiro-v10';
+const CACHE_NAME = 'portfolio-financeiro-v11';
 const APP_SHELL = [
   './',
   './index.html',

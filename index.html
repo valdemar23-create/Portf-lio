@@ -3088,6 +3088,156 @@ function openBulkPriceModal(){
 }
 
 /* ---------------------------------------------------------------------
+   19b. IMPORTAÇÃO EM MASSA DE BENCHMARKS
+   Funcionalidade adicional junto a "Benchmarks (valores manuais)" em Definições, para colar vários
+   registos "AAAA-MM;VALOR" de uma vez, sem substituir a introdução manual já existente (que continua
+   a funcionar exatamente como antes). Nada é gravado antes de uma pré-visualização e confirmação
+   explícitas; meses já existentes nunca são apagados — só atualizados se o utilizador escolher isso.
+   --------------------------------------------------------------------- */
+/* Interpreta um número tanto no formato europeu (vírgula decimal, ponto de milhares — ex: "4.076,60")
+   como americano (ponto decimal, vírgula de milhares — ex: "4,076.60"), sem ambiguidade: quando os dois
+   separadores aparecem, o que ocorre mais tarde na string é sempre o decimal; quando só um aparece,
+   decide-se pelo padrão (2 casas decimais = decimal; grupos de 3 dígitos = milhares). */
+function parseFlexibleNumber(raw){
+  let s = String(raw==null?'':raw).trim().replace(/\s/g,'');
+  if(!s) return NaN;
+  const neg = /^-/.test(s);
+  if(neg) s = s.slice(1);
+  const hasComma = s.includes(','), hasDot = s.includes('.');
+  let result;
+  if(hasComma && hasDot){
+    if(s.lastIndexOf(',') > s.lastIndexOf('.')) result = s.replace(/\./g,'').replace(',', '.');
+    else result = s.replace(/,/g,'');
+  } else if(hasComma){
+    result = /^\d{1,3}(,\d{3})+$/.test(s) ? s.replace(/,/g,'') : s.replace(',', '.');
+  } else if(hasDot){
+    result = /^\d{1,3}(\.\d{3})+$/.test(s) ? s.replace(/\./g,'') : s;
+  } else {
+    result = s;
+  }
+  const n = parseFloat(result);
+  return isNaN(n) ? NaN : (neg ? -n : n);
+}
+/* Analisa o texto colado linha a linha, sem gravar nada: devolve cada linha classificada como
+   novo / existente (já há valor guardado para esse mês) / duplicado (repetido dentro da própria
+   colagem — só a última ocorrência conta) / erro (com o motivo), mais os totais para a pré-visualização. */
+function analyzeBenchmarkImport(text, indexKey){
+  const lines = String(text||'').split('\n').map(l=>l.trim()).filter(Boolean);
+  const existingMap = {};
+  (STATE.benchmarks[indexKey]||[]).forEach(v=> existingMap[v.month]=v.value);
+  const seenAt = {};
+  const rows = [];
+  lines.forEach(line=>{
+    const parts = line.split(';');
+    if(parts.length !== 2){ rows.push({month:line, value:NaN, state:'erro', error:'Formato inválido (esperado AAAA-MM;VALOR)'}); return; }
+    const month = parts[0].trim();
+    if(!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)){ rows.push({month, value:NaN, state:'erro', error:'Mês inválido (use AAAA-MM, com MM entre 01 e 12)'}); return; }
+    const value = parseFlexibleNumber(parts[1]);
+    if(isNaN(value)){ rows.push({month, value:NaN, state:'erro', error:'Valor numérico inválido'}); return; }
+    if(seenAt[month] !== undefined){ rows[seenAt[month]].state = 'duplicado'; }
+    rows.push({month, value, state: existingMap[month]!==undefined ? 'existente' : 'novo', oldValue: existingMap[month]});
+    seenAt[month] = rows.length-1;
+  });
+  return {
+    rows,
+    novos: rows.filter(r=>r.state==='novo').length,
+    existentes: rows.filter(r=>r.state==='existente').length,
+    duplicados: rows.filter(r=>r.state==='duplicado').length,
+    erros: rows.filter(r=>r.state==='erro').length,
+  };
+}
+const BENCH_INDEX_LABELS = { SP500:'S&P 500', MSCIWorld:'MSCI World' };
+function openBenchmarkImportModal(defaultIndex, onImported){
+  openModal(`
+    <div class="modal-header"><h3>Importar benchmarks</h3><button class="modal-close">${icon('x',18)}</button></div>
+    <div class="modal-body">
+      <div class="field"><label>Índice</label>
+        <select id="biIndex">
+          <option value="SP500" ${defaultIndex==='SP500'?'selected':''}>S&amp;P 500</option>
+          <option value="MSCIWorld" ${defaultIndex==='MSCIWorld'?'selected':''}>MSCI World</option>
+        </select>
+      </div>
+      <p style="font-size:13px;margin:10px 0;color:var(--ink-faint);">Cole os valores mensais, um por linha, no formato <strong>AAAA-MM;VALOR</strong>. Aceita vírgula ou ponto como separador decimal (ex: 4076,60 · 4.076,60 · 4,076.60).</p>
+      <textarea id="biInput" rows="7" placeholder="2023-01;4076,60&#10;2023-02;3970,15&#10;2023-03;4109,31"></textarea>
+      <div id="biPreview" style="margin-top:14px;"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn" id="biCancel">Cancelar</button>
+      <button class="btn" id="biPreviewBtn">Pré-visualizar</button>
+      <button class="btn btn-primary" id="biImportBtn" style="display:none;"></button>
+    </div>`);
+  document.getElementById('biCancel').onclick = closeModal;
+  let analysis = null;
+
+  function renderPreview(){
+    const { rows, novos, existentes, duplicados, erros } = analysis;
+    const previewEl = document.getElementById('biPreview');
+    const importBtn = document.getElementById('biImportBtn');
+    let html = `<p style="font-size:13px;font-weight:600;margin-bottom:8px;">${rows.length} registo(s) analisado(s) — ${novos} novo(s), ${existentes} já existente(s)${duplicados?`, ${duplicados} duplicado(s)`:''}, ${erros} erro(s)</p>`;
+    if(existentes > 0){
+      html += `<div class="field" style="margin-bottom:10px;"><label>Registos já existentes (${existentes})</label>
+        <select id="biExistingMode">
+          <option value="keep">Manter valor existente</option>
+          <option value="update">Atualizar valor existente</option>
+        </select></div>`;
+    }
+    if(rows.length){
+      html += `<div class="table-wrap" style="max-height:220px;overflow-y:auto;"><table><thead><tr><th>Mês</th><th class="num">Valor</th><th>Estado</th></tr></thead><tbody>`;
+      html += rows.map(r=>{
+        let label, color;
+        if(r.state==='erro'){ label = `Erro — ${escapeHtml(r.error)}`; color='var(--negative)'; }
+        else if(r.state==='duplicado'){ label = 'Duplicado nesta colagem (ignorado)'; color='var(--ink-faint)'; }
+        else if(r.state==='existente'){ label = `Já existe (atual: ${fmtNumber(r.oldValue)})`; color='var(--warning)'; }
+        else { label = 'Novo'; color='var(--positive)'; }
+        return `<tr><td>${escapeHtml(r.month)}</td><td class="num">${isNaN(r.value)?'—':fmtNumber(r.value)}</td><td style="color:${color};font-weight:600;">${label}</td></tr>`;
+      }).join('');
+      html += `</tbody></table></div>`;
+    }
+    previewEl.innerHTML = html;
+
+    function updateImportBtn(){
+      const modeEl = document.getElementById('biExistingMode');
+      const willUpdate = modeEl && modeEl.value==='update' ? existentes : 0;
+      if(novos===0 && willUpdate===0){ importBtn.style.display='none'; return; }
+      importBtn.style.display = 'inline-flex';
+      importBtn.textContent = willUpdate>0
+        ? (novos>0 ? `Importar ${novos} novo(s) e atualizar ${willUpdate}` : `Atualizar ${willUpdate} registo(s)`)
+        : `Importar ${novos} novo(s) registo(s)`;
+    }
+    const modeEl = document.getElementById('biExistingMode');
+    if(modeEl) modeEl.onchange = updateImportBtn;
+    updateImportBtn();
+  }
+
+  document.getElementById('biPreviewBtn').onclick = ()=>{
+    analysis = analyzeBenchmarkImport(document.getElementById('biInput').value, document.getElementById('biIndex').value);
+    renderPreview();
+  };
+  // Se o índice for trocado depois de já haver uma pré-visualização, refaz-se automaticamente para
+  // esse índice — nunca se importa com uma análise feita para o índice anteriormente selecionado.
+  document.getElementById('biIndex').onchange = ()=>{ if(analysis) document.getElementById('biPreviewBtn').onclick(); };
+
+  document.getElementById('biImportBtn').onclick = ()=>{
+    if(!analysis) return;
+    const indexKey = document.getElementById('biIndex').value;
+    const modeEl = document.getElementById('biExistingMode');
+    const mode = modeEl ? modeEl.value : 'keep';
+    const byMonth = {};
+    (STATE.benchmarks[indexKey]||[]).forEach(v=> byMonth[v.month] = v);
+    let added=0, updated=0;
+    analysis.rows.forEach(r=>{
+      if(r.state==='novo'){ byMonth[r.month] = {month:r.month, value:r.value}; added++; }
+      else if(r.state==='existente' && mode==='update'){ byMonth[r.month] = {month:r.month, value:r.value}; updated++; }
+    });
+    STATE.benchmarks[indexKey] = Object.values(byMonth);
+    saveState();
+    closeModal();
+    toast(`Importação concluída. ${added} registo(s) adicionado(s), ${updated} atualizado(s).`, 'ok');
+    if(onImported) onImported();
+  };
+}
+
+/* ---------------------------------------------------------------------
    20. PÁGINA: DEFINIÇÕES
    --------------------------------------------------------------------- */
 function renderDefinicoes(root){
@@ -3127,10 +3277,11 @@ function renderDefinicoes(root){
           <button class="tab-btn" data-bench-tab="MSCIWorld">MSCI World</button>
         </div>
         <div id="benchWrap"></div>
-        <div style="display:flex;gap:8px;margin-top:10px;">
+        <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;">
           <input type="text" id="benchMonth" placeholder="YYYY-MM" style="width:110px;">
           <input type="number" step="0.01" class="num-input" id="benchValue" placeholder="Valor" style="width:110px;">
           <button class="btn btn-sm btn-primary" id="benchAdd">${icon('plus',13)} Adicionar</button>
+          <button class="btn btn-sm" id="benchImportBtn">${icon('upload',13)} Importar benchmarks</button>
         </div>
       </div>
     </div>
@@ -3195,6 +3346,7 @@ function renderDefinicoes(root){
     saveState(); toast('Valor adicionado.','ok'); renderBenchList();
     document.getElementById('benchMonth').value=''; document.getElementById('benchValue').value='';
   };
+  document.getElementById('benchImportBtn').onclick = ()=> openBenchmarkImportModal(benchTab, renderBenchList);
   renderBenchList();
 
   document.getElementById('exportJsonBtn').onclick = ()=>{
